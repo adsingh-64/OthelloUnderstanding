@@ -732,7 +732,7 @@ def compute_predictors(
 
         print(f"\n{func_name}")
 
-        layer_results = Parallel(n_jobs=num_cores)(
+        layer_results = Parallel(n_jobs=num_cores, verbose=1)(
             delayed(process_layer)(
                 layer,
                 data,
@@ -1245,7 +1245,7 @@ if __name__ == "__main__":
 
     # example config change
     # 6 batches seems to work reasonably well for training decision trees
-    default_config.n_batches = 6
+    default_config.n_batches = 60
     # default_config.batch_size = 10
     run_simulations(default_config)
     print(f"--- {time.time() - start_time} seconds ---")

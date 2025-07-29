@@ -8,6 +8,7 @@ wandb/
 **.png
 **.err
 autoencoders/*
+venv/
 
 !autoencoders/README.md
 !autoencoders/fix_ae_device.ipynb
@@ -44,4 +45,4 @@ circuits/run_chess_sae_trainer.sh
 circuits/nohup.out
 circuits/chess_sae_trainer.py
 circuits/full_pipeline_can*
-circuits/*.pkl
+circuits/*.pklvenv/

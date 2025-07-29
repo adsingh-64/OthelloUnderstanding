@@ -70,7 +70,7 @@ class SimulationConfig:
     max_depth: int = 8
     num_cores: int = 8
     force_recompute: bool = False
-    save_decision_trees: bool = False
+    save_decision_trees: bool = True
     binary_threshold: float = 0.1
     previous_layers_as_input: bool = False
     binary_dt: bool = False
