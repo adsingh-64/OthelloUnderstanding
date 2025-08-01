@@ -77,6 +77,7 @@ def construct_dataset_per_layer(
 def load_model_and_data(
     model_name: str,
     dataset_size: int,
+    test_size: int,
     custom_functions: list[Callable],
     device: str,
     layers: list[int],
@@ -85,7 +86,7 @@ def load_model_and_data(
     train_data = construct_dataset_per_layer(
         custom_functions, dataset_size, "train", device, layers
     )
-    test_data = construct_dataset_per_layer(custom_functions, dataset_size, "test", device, layers)
+    test_data = construct_dataset_per_layer(custom_functions, test_size, "test", device, layers)
 
     return model, train_data, test_data
 
@@ -1052,8 +1053,11 @@ def run_simulations(config: sim_config.SimulationConfig):
         "binary_threshold": config.binary_threshold,
     }
 
+    test_size = 500
+    test_n_batches = (test_size + config.batch_size - 1) // config.batch_size
+    
     model, train_data, test_data = load_model_and_data(
-        config.model_name, dataset_size, config.custom_functions, device, list(range(8))
+        config.model_name, dataset_size, test_size, config.custom_functions, device, list(range(8))
     )
 
     for custom_function in config.custom_functions:
@@ -1076,7 +1080,7 @@ def run_simulations(config: sim_config.SimulationConfig):
                 device,
                 8,
                 config.batch_size,
-                config.n_batches,
+                test_n_batches,
             )
 
     for combination in config.combinations:
@@ -1245,7 +1249,6 @@ if __name__ == "__main__":
 
     # example config change
     # 6 batches seems to work reasonably well for training decision trees
-    default_config.n_batches = 60
-    # default_config.batch_size = 10
+
     run_simulations(default_config)
     print(f"--- {time.time() - start_time} seconds ---")

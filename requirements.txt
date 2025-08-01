@@ -26,6 +26,7 @@ zstandard == 0.22.0
 pytest == 8.1.1
 transformers == 4.39.3
 wandb == 0.16.6
+scikit-learn
 
 # Chess specific requirements below
 python-chess==1.999
