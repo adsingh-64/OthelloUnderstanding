@@ -20,10 +20,7 @@ import circuits.othello_utils as othello_utils
 import neuron_simulation.simulation_config as sim_config
 from neuron_simulation.simulate_activations_with_dts import (
     construct_dataset_per_layer,
-    add_probe_outputs_to_data,
     get_submodule_dict,
-    cache_sae_activations,
-    calculate_binary_activations,
     perform_interventions,
     update_results_dict,
 )
@@ -51,7 +48,6 @@ def evaluate_decision_trees(
     custom_functions: List[Callable],
     model_name: str = "Othello-GPT-Transformer-Lens",
     test_size: int = 500,
-    batch_size: int = 50,
     intervention_threshold: float = 0.2,
     binary_threshold: float = 0.1,
     repo_dir: str = "autoencoders",
@@ -83,28 +79,12 @@ def evaluate_decision_trees(
     print(f"Loading decision trees from: {decision_tree_file}")
     decision_trees = load_decision_trees(decision_tree_file)
     
-    test_n_batches = (test_size + batch_size - 1) // batch_size
-    
     print(f"Loading model and test data (test_size={test_size})")
     # Load model directly and only create test data
     model = utils.get_model(model_name, device)
     test_data = construct_dataset_per_layer(
         custom_functions, test_size, "test", device, list(range(8))
     )
-    
-    # Add probe outputs if needed
-    for custom_function in custom_functions:
-        if custom_function.__name__ in othello_utils.probe_input_functions:
-            print(f"Adding probe outputs for {custom_function.__name__}")
-            test_data = add_probe_outputs_to_data(
-                test_data,
-                model,
-                custom_function,
-                device,
-                8,
-                batch_size,
-                test_n_batches,
-            )
     
     # Load SAEs
     print(f"Loading SAEs for input_location={input_location}, trainer_id={trainer_id}")
@@ -184,7 +164,6 @@ def main():
 
     # Other settings
     test_size = 500
-    batch_size = 50
     intervention_threshold = 0.7
     binary_threshold = 0.1
     repo_dir = "autoencoders"
@@ -207,7 +186,6 @@ def main():
         custom_functions=custom_functions,
         model_name=model_name,
         test_size=test_size,
-        batch_size=batch_size,
         intervention_threshold=intervention_threshold,
         binary_threshold=binary_threshold,
         repo_dir=repo_dir,
