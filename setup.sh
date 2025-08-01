@@ -5,3 +5,5 @@ source .venv/bin/activate
 uv pip install -r requirements.txt
 uv pip install -e .
 git submodule update --init --recursive
+apt update
+apt install zip

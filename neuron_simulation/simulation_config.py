@@ -63,7 +63,7 @@ class SimulationConfig:
     model_name: str = "Baidicoot/Othello-GPT-Transformer-Lens"
     output_location: str = "neuron_simulation/"
     batch_size: int = 10
-    n_batches: int = 6
+    n_batches: int = 60
     num_layers: int = 8
     layers = list(range(num_layers))
     intervention_threshold: float = 0.7

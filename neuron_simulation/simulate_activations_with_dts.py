@@ -982,11 +982,13 @@ def perform_interventions(
             print(f"{clean_accuracy} Original model legal move accuracy (should be ~0.9998)")
             print(f"{patch_accuracy} Patch intervention (higher is better)")
 
-            for layer in selected_features:
-                good_f1s = selected_features[layer]
-                print(
-                    f"Out of {good_f1s.shape[0]} neurons, {good_f1s.sum()} can be fit well by a decision tree"
-                )
+            # Note: These counts are based on training-time R² values, not test evaluation
+            # The correct test evaluation counts are saved in the pickle files
+            # for layer in selected_features:
+            #     good_f1s = selected_features[layer]
+            #     print(
+            #         f"Out of {good_f1s.shape[0]} neurons, {good_f1s.sum()} can be fit well by a decision tree"
+            #     )
 
             assert clean_total == patch_total
 
@@ -1168,25 +1170,47 @@ def run_simulations(config: sim_config.SimulationConfig):
                         config.layers,
                     )
 
+                # Cache SAE activations on test data for proper evaluation
+                print("Caching SAE activations on test data for evaluation...")
+                test_neuron_acts = cache_sae_activations(
+                    model,
+                    test_data,
+                    config.layers,
+                    config.batch_size,
+                    test_n_batches,
+                    input_location,
+                    ae_list,
+                    submodule_dict,
+                )
+                test_neuron_acts = utils.to_device(test_neuron_acts, "cpu")
+                
+                # Evaluate decision trees on the 500-game test set instead of training split
+                print("Evaluating decision trees on test data...")
                 for layer in decision_trees:
                     results["results"][layer] = {}
                     for custom_function in config.custom_functions:
-                        results["results"][layer][custom_function.__name__] = {
+                        func_name = custom_function.__name__
+                        
+                        # Get test data for this layer and function
+                        games_BLC = test_data[layer][func_name]
+                        games_BLC = utils.to_device(games_BLC, "cpu")
+                        
+                        # Prepare data for sklearn evaluation
+                        X = einops.rearrange(games_BLC, "b l c -> (b l) c").cpu().numpy()
+                        y_regular = einops.rearrange(test_neuron_acts[layer], "b l d -> (b l) d").cpu().numpy()
+                        
+                        # Get decision tree model and evaluate on test data
+                        dt_model = decision_trees[layer][func_name]["decision_tree"]["model"]
+                        dt_mse, dt_r2 = calculate_neuron_metrics(dt_model, X, y_regular)
+                        
+                        results["results"][layer][func_name] = {
                             "decision_tree": {
-                                "mse": decision_trees[layer][custom_function.__name__][
-                                    "decision_tree"
-                                ]["mse"],
-                                "r2": decision_trees[layer][custom_function.__name__][
-                                    "decision_tree"
-                                ]["r2"],
+                                "mse": dt_mse,  # Evaluated on 500-game test set
+                                "r2": dt_r2,    # Evaluated on 500-game test set
                             },
                             "binary_decision_tree": {
-                                "f1": decision_trees[layer][custom_function.__name__][
-                                    "binary_decision_tree"
-                                ]["f1"],
-                                "accuracy": decision_trees[layer][custom_function.__name__][
-                                    "binary_decision_tree"
-                                ]["accuracy"],
+                                "f1": decision_trees[layer][func_name]["binary_decision_tree"]["f1"],
+                                "accuracy": decision_trees[layer][func_name]["binary_decision_tree"]["accuracy"],
                             },
                         }
 
