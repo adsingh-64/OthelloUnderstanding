@@ -17,3 +17,5 @@ wandb == 0.16.6
 scikit-learn
 transformer_lens
 jaxtyping
+numpy<2
+chess
