@@ -11,7 +11,7 @@ device = t.device("cuda")
 activations = t.load("linear_probes/dataset_cache/activations_100000_layers_6.pt")['layer_activations'][6].double().to(device)
 
 # %%
-probe = t.load("20250804_174921/probe_6.pt").double().to(device) # [d_model, row, col, mode]
+probe = t.load("20250805_135718/probe_6.pt").double().to(device) # [d_model, row, col, mode]
 
 # %%
 def gram_schmidt(vectors):
@@ -62,14 +62,54 @@ def test_against_original_differences_single_square(ablated_activations, probe):
                                'games moves d_model, vectors d_model -> games moves vectors')
     assert t.allclose(projections, t.zeros_like(projections), atol=1e-8, rtol=1e-8)
 
-#%%
-ablated_activations = directional_ablation_single_square(activations, probe[:, 0, 0, :])
-test_against_original_differences_single_square(ablated_activations, probe[:, 0, 0, :])
+def plot_cosine_sim(probe):
+    difference_vectors = get_difference_vectors(probe)
+    difference_vectors = einops.rearrange(difference_vectors, "(two row col) d_model -> row col two d_model", two=2, row=8, col=8)
+    
+    # Reshape for pairwise computation
+    n_pos = 64
+    d_model = difference_vectors.shape[-1]
+    vecs_flat = einops.rearrange(difference_vectors, "row col two d_model -> (row col) two d_model")
+    
+    # Compute QR decomposition for orthonormal bases
+    Q_all = []
+    for i in range(n_pos):
+        vecs = vecs_flat[i].T  # (d_model, 2)
+        Q, _ = t.qr(vecs)
+        Q_all.append(Q[:, :2])  # Keep first 2 columns
+    
+    Q_all = t.stack(Q_all)  # (n_pos, d_model, 2)
+    
+    # Compute all pairwise products Q_i^T @ Q_j efficiently
+    # Q_all: (n_pos, d_model, 2)
+    # We want: (n_pos, n_pos, 2, 2) where [i,j] = Q_i^T @ Q_j
+    
+    Q_all_T = Q_all.transpose(-2, -1)  # (n_pos, 2, d_model)
+    
+    # Use einsum for efficient computation
+    M_all = t.einsum('i a d, j d b -> i j a b', Q_all_T, Q_all)  # (n_pos, n_pos, 2, 2)
+    
+    # Compute SVD for each 2x2 matrix
+    similarities = t.zeros(n_pos, n_pos)
+    
+    for i in range(n_pos):
+        for j in range(n_pos):
+            _, S, _ = t.svd(M_all[i, j])
+            angles = t.acos(S.clamp(-1, 1))
+            similarities[i, j] = 1 - (angles.mean() / (t.pi / 2))
+    
+    return einops.rearrange(similarities, "squares (row col) -> squares row col", row=8, col=8)
 
 #%%
-t.save({'layer_activations': {6: ablated_activations.float()}}, "linear_probes/dataset_cache/activations_100000_layers_6_A0_ablated.pt")
+### Single square ablation
+ablated_activations = directional_ablation_single_square(activations, probe[:, 0, 3, :])
+test_against_original_differences_single_square(ablated_activations, probe[:, 0, 3, :])
 
 #%%
+t.save({'layer_activations': {6: ablated_activations.float()}}, "linear_probes/dataset_cache/activations_100000_layers_6_A3_ablated.pt")
+
+#%%
+### Full ablation
 ablated_activations = directional_ablation(activations, probe)
 test_against_original_differences(ablated_activations, probe)
 

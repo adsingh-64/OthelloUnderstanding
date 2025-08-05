@@ -11,6 +11,7 @@ from torch import Tensor
 from IPython.display import HTML, display
 from jaxtyping import Bool, Float, Int
 import neel_utils as neel_utils
+from ablate_probe import directional_ablation_single_square, plot_cosine_sim
 
 device = "cuda" if t.cuda.is_available() else "cpu"
 
@@ -55,10 +56,24 @@ for i in range(0, len(train_data["encoded_inputs"]), batch_size):
 
 # %%
 probe = t.load(
-        f"20250804_174921/probe_{6}.pt",
+        f"20250805_135718/probe_{6}.pt",
         map_location=str(device),
         weights_only="True",
     )
+
+subspace_sims = plot_cosine_sim(probe)
+
+#%%
+neel_utils.plot_board_values(
+    subspace_sims[:8],
+    width=1000,
+    boards_per_row=4,
+    title="Angles Between Subspaces",
+    board_titles=[f"" for i in range(1, 9)],
+)
+
+#%%
+focus_cache_tensor = directional_ablation_single_square(focus_cache_tensor.double(), probe[:, 0, 3, :]).float()
 
 # %%
 probe_out = einops.einsum(
@@ -85,13 +100,13 @@ print(final_accuracy)
 # %%
 neel_utils.plot_board_values(
     square_accuracies,
-    title="Per Square Linear Probe Accuracy (Full Probe Ablated)",
+    title="Per Square Linear Probe Accuracy (A3 Probe Directions Ablated)",
     zmax=1,
     zmin=0,
 )
 
 # %%
 import json
-with open('20250804_231035/accuracy.json', 'w') as f:
+with open('20250805_150845/accuracy.json', 'w') as f:
     json.dump(final_accuracy.tolist(), f)
 # %%
