@@ -7,6 +7,7 @@
 import torch as t
 import numpy as np
 import einops
+import nnsight
 import circuits.utils as utils
 import circuits.othello_utils as othello_utils
 from circuits.eval_sae_as_classifier import construct_othello_dataset
@@ -24,9 +25,9 @@ print(f"Using device: {device}")
 
 # %%
 model_name = "Baidicoot/Othello-GPT-Transformer-Lens"
-dataset_size = 50
+dataset_size = 10
 custom_functions = [
-    othello_utils.games_batch_to_input_tokens_flipped_bs_classifier_input_BLC,
+    othello_utils.games_batch_to_state_stack_mine_yours_BLRRC,
 ]
 model = utils.get_model(model_name, device)
 train_data = construct_othello_dataset(
@@ -35,12 +36,12 @@ train_data = construct_othello_dataset(
     split="train",
     device=device,
 )
-test_data = construct_othello_dataset(
-    custom_functions=custom_functions,
-    n_inputs=dataset_size//2,
-    split="test", 
-    device=device,
-)
+# test_data = construct_othello_dataset(
+#     custom_functions=custom_functions,
+#     n_inputs=dataset_size//2,
+#     split="test",
+#     device=device,
+# )
 
 # %%
 for key in train_data.keys():
@@ -49,22 +50,70 @@ for key in train_data.keys():
     print(f"{key} : {train_data[key][0]}")
 
 # %%
-# First 10 moves of game 1
-sample_input = t.tensor(train_data["encoded_inputs"][0][:10]).to(device)
-with model.trace(sample_input):
-    logits = model.unembed.output.save()
-logprobs = logits.log_softmax(dim=-1)
+def plot_game_trajectory(game: Int[Tensor, "n_moves"]) -> None:
+    n_moves = game.shape[0]
+    board_states = t.zeros((n_moves, 8, 8), dtype=t.int32)
+    legal_moves = t.zeros((n_moves, 8, 8), dtype=t.int32)
+    board = neel_utils.OthelloBoardState()
+    for i, token_id in enumerate(game):
+        # board.umpire takes a square index (i.e. from 0 to 63) and makes a move on the board
+        board.umpire(neel_utils.id_to_square(token_id))
+
+        # board.state gives us the 8x8 numpy array of 0 (blank), -1 (black), 1 (white)
+        board_states[i] = t.from_numpy(board.state)
+
+        # board.get_valid_moves() gives us a list of the indices of squares that are legal to play next
+        legal_moves[i].flatten()[board.get_valid_moves()] = 1
+
+    # Turn `legal_moves` into strings, with "o" where the move is legal and empty string where illegal
+    legal_moves_annotation = np.where(to_numpy(legal_moves), "o", "").tolist()
+
+    if n_moves <= 3:
+        boards_per_row = n_moves
+        width = n_moves * 250  # Bigger boards when fewer
+    elif n_moves <= 5:
+        boards_per_row = n_moves
+        width = n_moves * 200  # Standard size
+    elif n_moves <= 10:
+        boards_per_row = 5
+        width = 1000  # Max width, 5 per row
+    else:
+        boards_per_row = 5
+        width = 1000  # Keep at max for many boards
+
+    neel_utils.plot_board_values(
+        board_states,
+        title="Board States",
+        width=width * 2,
+        boards_per_row=boards_per_row,
+        board_titles=[f"State after move {i}" for i in range(n_moves)],
+        text=legal_moves_annotation,
+    )
 
 # %%
-MIDDLE_SQUARES = [27, 28, 35, 36]
-ALL_SQUARES = [i for i in range(64) if i not in MIDDLE_SQUARES]
+neurons = [111, 1111]
+layer = 5
+sample_input = t.tensor([[20]]).to(device)
+plot_game_trajectory(sample_input)
+for steering in [None, 0, -5, -10]:
+    if steering is not None:
+        with model.trace(sample_input):
+            model.blocks[layer].mlp.hook_post.output[..., [neurons]] = steering
+            logits = model.unembed.output.save()
+    else:
+        with model.trace(sample_input) as tracer:
+            logits = model.unembed.output.save()
+    logprobs = logits.log_softmax(dim=-1)
+    MIDDLE_SQUARES = [27, 28, 35, 36]
+    ALL_SQUARES = [i for i in range(64) if i not in MIDDLE_SQUARES]
 
-logprobs_board = t.full(size=(8, 8), fill_value=-13.0, device=device)
-logprobs_board.flatten()[ALL_SQUARES] = logprobs[
-    0, 0, 1:
-]  # the [1:] is to filter out logits for the "pass" move
-
-neel_utils.plot_board_values(logprobs_board, title="Example Log Probs", width=500)
+    logprobs_board = t.full(size=(8, 8), fill_value=-13.0, device=device)
+    logprobs_board.flatten()[ALL_SQUARES] = logprobs[
+        0, 0, 1:
+    ]  # the [1:] is to filter out logits for the "pass" move
+    intervention = ", ".join([f"L{layer}N{neuron} = {steering}" for neuron in neurons])
+    title = f"Log Probs | do({intervention})" if steering is not None else "Log Probs"
+    neel_utils.plot_board_values(logprobs_board, title=title, width=500)
 
 # %%
 TOKEN_IDS_2D = np.array(
@@ -99,32 +148,6 @@ neel_utils.plot_board_values(
     board_titles=[f"Logprobs after move {i}" for i in range(1, 11)],
 )
 
-# %%
-board_states = t.zeros((10, 8, 8), dtype=t.int32)
-legal_moves = t.zeros((10, 8, 8), dtype=t.int32)
-
-board = neel_utils.OthelloBoardState()
-for i, token_id in enumerate(sample_input.squeeze()):
-    # board.umpire takes a square index (i.e. from 0 to 63) and makes a move on the board
-    board.umpire(neel_utils.id_to_square(token_id))
-
-    # board.state gives us the 8x8 numpy array of 0 (blank), -1 (black), 1 (white)
-    board_states[i] = t.from_numpy(board.state)
-
-    # board.get_valid_moves() gives us a list of the indices of squares that are legal to play next
-    legal_moves[i].flatten()[board.get_valid_moves()] = 1
-
-# Turn `legal_moves` into strings, with "o" where the move is legal and empty string where illegal
-legal_moves_annotation = np.where(to_numpy(legal_moves), "o", "").tolist()
-
-neel_utils.plot_board_values(
-    board_states,
-    title="Board states",
-    width=1000,
-    boards_per_row=5,
-    board_titles=[f"State after move {i}" for i in range(1, 11)],
-    text=legal_moves_annotation,
-)
 
 # %%
 board_seqs_id = t.tensor(train_data["encoded_inputs"]).long()
@@ -176,14 +199,14 @@ print("focus_legal_moves", tuple(focus_legal_moves.shape))
 
 # Plot the first 10 moves of the first game
 neel_utils.plot_board_values(
-    focus_states[0, :10],
+    focus_states[0, 40:50],
     title="Board states",
     width=1000,
     boards_per_row=5,
     board_titles=[
-        f"Move {i}, {'white' if i % 2 == 1 else 'black'} to play" for i in range(1, 11)
+        f"Move {i}, {'black' if i % 2 == 1 else 'white'} to play" for i in range(40, 50)
     ],
-    text=np.where(to_numpy(focus_legal_moves[0, :10]), "o", "").tolist(),
+    text=np.where(to_numpy(focus_legal_moves[0, 40:50]), "o", "").tolist(),
 )
 
 # %%
@@ -223,7 +246,7 @@ def plot_probe_outputs(
 
 # %%
 game_index = 0
-move = 29
+move = 48
 
 neel_utils.plot_board_values(
     focus_states[game_index, move],
@@ -254,7 +277,7 @@ my_probe_normalised = my_probe / my_probe.norm(dim=0, keepdim=True)
 # Set the center blank probes to 0, since they're never blank so the probe is meaningless
 blank_probe_normalised[:, [3, 3, 4, 4], [3, 4, 3, 4]] = 0.0
 
-#%%
+# %%
 def get_w_in(
     model: HookedTransformer,
     layer: int,
@@ -317,7 +340,7 @@ def calculate_neuron_output_weights(
     return einops.einsum(w_out, probe, "d_model, d_model row col -> row col")
 
 layer = 5
-neuron = 4
+neuron = 1407
 
 w_in_L5N1393_blank = calculate_neuron_input_weights(model, blank_probe_normalised, layer, neuron)
 w_in_L5N1393_my = calculate_neuron_input_weights(model, my_probe_normalised, layer, neuron)
