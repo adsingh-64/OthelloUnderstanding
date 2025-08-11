@@ -11,6 +11,8 @@ wandb/
 **.pdf
 **.svg
 **.gz
+**.pt
+**.json
 autoencoders/*
 venv/
 
