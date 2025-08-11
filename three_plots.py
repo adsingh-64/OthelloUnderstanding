@@ -26,8 +26,8 @@ model_name = "Baidicoot/Othello-GPT-Transformer-Lens"
 model = utils.get_model(model_name, device)
 
 # %%
-LAYER = 2
-NEURON = 595
+LAYER = 1
+NEURON = 748
 
 # %%
 MIDDLE_SQUARES = [27, 28, 35, 36]
@@ -138,30 +138,36 @@ w_out_unembed = calculate_neuron_unembedding(
 
 neel_utils.plot_board_values(
     t.stack([w_in_blank, w_in_my]),
-    title=f"Input weights in terms of the probe for neuron L{LAYER}N{NEURON}",
+    title=f"L{LAYER}N{NEURON} reading",
     board_titles=["Blank In", "My In"],
     width=650,
     height=380,
 )
 
-neel_utils.plot_board_values(
-    w_out_unembed,
-    title=f"Cosine sim of neuron L{LAYER}N{NEURON} with W<sub>U</sub> directions",
-    width=450,
-    height=380,
-)
+# neel_utils.plot_board_values(
+#     w_out_unembed,
+#     title=f"Cosine sim of neuron L{LAYER}N{NEURON} with W<sub>U</sub> directions",
+#     width=450,
+#     height=380,
+# )
 
 # %%
 probe_writing = probe_dict[LAYER]
 my_probe = probe_writing[..., 0] - probe_writing[..., 2]
 my_probe_normalised = my_probe / my_probe.norm(dim=0, keepdim=True)
+blank_probe = probe[..., 1] - (probe[..., 0] + probe[..., 2]) / 2
+blank_probe_normalised = blank_probe / blank_probe.norm(dim=0, keepdim=True)
 w_out_my = calculate_neuron_output_weights(
     model, my_probe_normalised, LAYER, NEURON
 )
+w_out_blank = calculate_neuron_output_weights(
+    model, blank_probe_normalised, LAYER, NEURON
+)
 neel_utils.plot_board_values(
-    w_out_my,
-    title=f"Cosine sim of neuron L{LAYER}N{NEURON} with mine - theirs L{LAYER} resid post direction",
-    width=450,
+    [w_out_blank, w_out_my],
+    title=f"L{LAYER}N{NEURON} writing",
+    board_titles = [f"L{LAYER}N{NEURON} blank writing direction", f"L{LAYER}N{NEURON} my writing direction"],
+    width=650,
     height=380,
 )
 

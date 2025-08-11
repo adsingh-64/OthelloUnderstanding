@@ -30,8 +30,13 @@ max_samples = 10000
 batch_size = 32
 
 # %%
+move = neel_utils.id_to_square([20, 19, 41, 21, 27, 34, 13, 33, 29, 12, 26, 43, 38, 14, 10, 48, 42, 18, 28, 32, 49, 22, 4, 15, 44, 50, 37, 31, 39, 2, 55, 57, 51, 6, 17, 24, 40, 47, 45, 46, 54, 52, 23])
+features = games_batch_to_input_tokens_flipped_bs_classifier_input_BLC([move]).numpy()[:, -1]
+tree_model.apply(features)
+
+# %%
 def othello_generator(
-    dataset_name="taufeeque/othellogpt",
+    dataset_name="adamkarvonen/othello_45MB_games",
     split="train",
     streaming=True,
     max_samples=100,  # New parameter
@@ -97,25 +102,64 @@ with gzip.open(f"leaf_examples_L{layer}_N{neuron_idx}.pkl.gz", "rb") as f:
 
 # %%
 node_data = loaded_data['node_data']
-selected = node_data[347]
 
 # %%
-for example in selected:
+selected = node_data[334]
+for example in selected[:10]:
     game, move_idx = example['game'], example['move_idx']
     focus_states, focus_legal_moves, focus_legal_moves_annotation = (
         get_board_states_and_legal_moves(t.tensor(game))
     )
     # Need to add batch dimension for single board
     neel_utils.plot_board_values(
-        focus_states[-1:],  # Use slice to keep dimension
+        focus_states[-2:],  # Use slice to keep dimension
         title="Board states",
-        width=500,
-        height = 500,
-        boards_per_row=1,
+        width=800,
+        height=500,
+        boards_per_row=2,
         board_titles=[
+            f"After move {move_idx - 1}, {'white' if (move_idx - 1) % 2 == 0 else 'black'} to play next",
             f"After move {move_idx}, {'white' if move_idx % 2 == 0 else 'black'} to play next"
         ],
-        text=[focus_legal_moves_annotation[-1]],  # Wrap in list for single board
+        text=focus_legal_moves_annotation[-2:],  # Wrap in list for single board
     )
+
+# %%
+def analyze_top_leaf_nodes(tree_model, node_data, top_k=10, min_examples=10):
+    """
+    Show top k leaf nodes by prediction value (only those with at least min_examples).
+    
+    Args:
+        tree_model: The decision tree model
+        node_data: Dictionary mapping leaf node_id to examples
+        top_k: Number of top leaf nodes to display
+        min_examples: Minimum number of examples required (default 10)
+    """
+    # Get all leaf nodes
+    leaf_nodes = np.where(tree_model.tree_.children_left == -1)[0]
+    all_predictions = tree_model.tree_.value.flatten()
+    
+    # Get predictions for leaf nodes that have at least min_examples
+    leaf_predictions = []
+    for node_id in leaf_nodes:
+        if node_id in node_data and len(node_data[node_id]) >= min_examples:
+            n_examples = len(node_data[node_id])
+            prediction = all_predictions[node_id]
+            leaf_predictions.append((node_id, prediction, n_examples))
+    
+    # Sort by prediction value (largest first)
+    leaf_predictions.sort(key=lambda x: x[1], reverse=True)
+    
+    # Display results
+    print(f"\nTop {top_k} leaf nodes by prediction value (≥{min_examples} examples):")
+    print(f"Total leaf nodes: {len(leaf_nodes)}, with ≥{min_examples} examples: {len(leaf_predictions)}")
+    print("-" * 60)
+    
+    k = min(top_k, len(leaf_predictions))
+    for i, (node_id, prediction, n_examples) in enumerate(leaf_predictions[:k]):
+        print(f"Rank {i+1:2d}: Node {node_id:4d} | Prediction: {prediction:8.4f} | Examples: {n_examples:5d}")
+
+# Example usage:
+analyze_top_leaf_nodes(tree_model, node_data, top_k=10)
 
 # %%
