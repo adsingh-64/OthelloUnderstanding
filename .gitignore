@@ -8,6 +8,9 @@ wandb/
 **.pkl
 **.png
 **.err
+**.pdf
+**.svg
+**.gz
 autoencoders/*
 venv/
 
