@@ -26,8 +26,8 @@ model_name = "Baidicoot/Othello-GPT-Transformer-Lens"
 model = utils.get_model(model_name, device)
 
 # %%
-LAYER = 3
-NEURON = 2018
+LAYER = 2
+NEURON = 460
 
 # %%
 MIDDLE_SQUARES = [27, 28, 35, 36]
@@ -144,12 +144,12 @@ neel_utils.plot_board_values(
     height=380,
 )
 
-# neel_utils.plot_board_values(
-#     w_out_unembed,
-#     title=f"Cosine sim of neuron L{LAYER}N{NEURON} with W<sub>U</sub> directions",
-#     width=450,
-#     height=380,
-# )
+neel_utils.plot_board_values(
+    w_out_unembed,
+    title=f"Cosine sim of neuron L{LAYER}N{NEURON} with W<sub>U</sub> directions",
+    width=450,
+    height=380,
+)
 
 # %%
 probe_writing = probe_dict[LAYER]
