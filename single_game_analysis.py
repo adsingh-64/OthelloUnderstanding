@@ -79,22 +79,49 @@ def plot_probe_outputs(
     )
 
 # %%
+game_encoded = [20, 19, 41, 21, 27, 34, 13, 33, 29, 12, 26, 43, 38, 14, 10, 48, 42, 18, 28, 32, 49, 22, 4, 15, 44, 50, 37, 31, 39, 2, 55, 57, 51, 6, 17, 24, 40, 47, 45, 46, 54, 52, 23]
+
+# %%
 if MAIN:
-    game_encoded = [20, 19, 41, 21, 27, 34, 13, 33, 29, 12, 26, 43, 38, 14, 10, 48, 42, 18, 28, 32, 49, 22, 4, 15, 44, 50, 37, 31, 39, 2, 55, 57, 51, 6, 17, 24, 40, 47, 45, 46, 54, 52, 23]
     game_decoded = neel_utils.id_to_square(game_encoded)
     probe = probe_dict[4]
     theirs_direction = probe[..., 2] - probe[..., 0]
     g2_theirs = theirs_direction[:, 6, 2]
     with model.trace(t.tensor(game_encoded)):
-        hidden_states = model.blocks[4].mlp.hook_post.output[0, -1].save()
-        hidden_grads = model.blocks[4].mlp.hook_post.output.grad[0, -1].save()
+        hidden_states = []
+        hidden_grads = []
+        for i in range(5):
+            hidden_states.append(model.blocks[i].mlp.hook_post.output[0, -1].save())
+            hidden_grads.append(model.blocks[i].mlp.hook_post.output.grad[0, -1].save())
         resid_post = model.blocks[4].hook_resid_post.output[0, -1]
-        metric = einops.einsum(resid_post, g2_theirs, "d_model, d_model ->") 
+        metric = einops.einsum(resid_post, g2_theirs, "d_model, d_model ->")
         metric.backward()
-    hidden_attrs = hidden_states * hidden_grads
-    top_attrs, top_indices = hidden_attrs.abs().topk(10)
-    for neuron_idx in top_indices:
-        print(f"Attribution score for L{4}N{neuron_idx}: {hidden_attrs[neuron_idx]}")
+    hidden_attrs = [hidden_state * hidden_grad for hidden_state, hidden_grad in zip(hidden_states, hidden_grads)]
+    for i, layer in enumerate(hidden_attrs):
+        print("=" * 60)
+        top_attrs, top_indices = layer.abs().topk(5)
+        for neuron_idx in top_indices:
+            print(f"Attribution score for L{i}N{neuron_idx}: {layer[neuron_idx]}")
+
+# %%
+if MAIN:
+    with model.trace(t.tensor(game_encoded)):
+        hidden_states = []
+        hidden_grads = []
+        for i in range(3):
+            hidden_states.append(model.blocks[i].mlp.hook_post.output[0, -1].save())
+            hidden_grads.append(model.blocks[i].mlp.hook_post.output.grad[0, -1].save())
+        metric = model.blocks[3].mlp.hook_post.output[0, -1, 2018].save()
+        metric.backward()
+    hidden_attrs = [
+        hidden_state * hidden_grad
+        for hidden_state, hidden_grad in zip(hidden_states, hidden_grads)
+    ]
+    for i, layer in enumerate(hidden_attrs):
+        print("=" * 60)
+        top_attrs, top_indices = layer.abs().topk(5)
+        for neuron_idx in top_indices:
+            print(f"Attribution score for L{i}N{neuron_idx}: {layer[neuron_idx]}")
 
 # %%
 if MAIN:
@@ -111,14 +138,14 @@ if MAIN:
 # %%
 if MAIN:
     with model.trace(t.tensor(game_encoded)):
-        hidden_states = model.blocks[0].mlp.hook_post.output[0, -1].save()
-        hidden_grads = model.blocks[0].mlp.hook_post.output.grad[0, -1].save()
-        metric = model.blocks[1].mlp.hook_post.output[0, -1, 748]
+        hidden_states = model.blocks[3].mlp.hook_post.output[0, -1].save()
+        hidden_grads = model.blocks[3].mlp.hook_post.output.grad[0, -1].save()
+        metric = model.blocks[4].mlp.hook_post.output[0, -1, 2046]
         metric.backward()
     hidden_attrs = hidden_states * hidden_grads
     top_attrs, top_indices = hidden_attrs.abs().topk(10)
     for neuron_idx in top_indices:
-        print(f"Attribution score for L{0}N{neuron_idx}: {hidden_attrs[neuron_idx]}")
+        print(f"Attribution score for L{3}N{neuron_idx}: {hidden_attrs[neuron_idx]}")
 
 # %%
 if MAIN:
@@ -137,10 +164,32 @@ if MAIN:
         text=np.where(to_numpy(focus_legal_moves.squeeze()), "o", "").tolist(),
     )
 
+
 # %%
+def plot_probe_outputs_intervened(
+    game: Int[Tensor, "n_moves"], probe_dict: dict[int, Tensor], layer: int, title: str
+):
+    with model.trace(game.to(device)):
+        model.blocks[3].mlp.hook_post.output[0, -1, 2018] = -5
+        residual_stream = model.blocks[layer].output[0, -1].save()
+    linear_probe = probe_dict[layer]
+    probe_out = einops.einsum(
+        residual_stream,
+        linear_probe,
+        "d_model, d_model row col options -> options row col",
+    )
+    neel_utils.plot_board_values(
+        probe_out.softmax(dim=0),
+        title=title,
+        width=900,
+        height=400,
+        board_titles=["P(Mine)", "P(Empty)", "P(Their's)"],
+        # text=BOARD_LABELS_2D,
+    )
+game_encoded = [20, 19, 41, 21, 27, 34, 13, 33, 29, 12, 26, 43, 38, 14, 10, 48, 42, 18, 28, 32, 49, 22, 4, 15, 44, 50, 37, 31, 39, 2, 55, 57, 51, 6, 17, 24, 40, 47, 45, 46, 54, 52, 23]
 if MAIN:
     for layer in range(model.cfg.n_layers):
-        plot_probe_outputs(
+        plot_probe_outputs_intervened(
             t.tensor(game_encoded),
             probe_dict,
             layer,

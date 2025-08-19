@@ -164,19 +164,32 @@ def evaluate_decision_trees(
             y_regular = einops.rearrange(neuron_acts[layer], "b l d -> (b l) d").cpu().numpy()
             y_binary = einops.rearrange(binary_acts[layer], "b l d -> (b l) d").cpu().numpy()
             
-            # Get decision tree model and evaluate on test data
-            dt_model = decision_trees[layer][func_name]["decision_tree"]["model"]
-            dt_mse, dt_r2 = calculate_neuron_metrics(dt_model, X, y_regular)
+            # Check if regular decision tree exists and evaluate if present
+            regular_dt_results = {"mse": None, "r2": None}
+            if "decision_tree" in decision_trees[layer][func_name]:
+                dt_model = decision_trees[layer][func_name]["decision_tree"].get("model")
+                if dt_model is not None:
+                    dt_mse, dt_r2 = calculate_neuron_metrics(dt_model, X, y_regular)
+                    regular_dt_results = {"mse": dt_mse, "r2": dt_r2}
+            
+            # Check if binary decision tree exists and evaluate if present
+            binary_dt_results = {"f1": None, "accuracy": None}
+            if "binary_decision_tree" in decision_trees[layer][func_name]:
+                binary_dt_model = decision_trees[layer][func_name]["binary_decision_tree"].get("model")
+                if binary_dt_model is not None:
+                    accuracy, precision, recall, f1 = calculate_binary_metrics(
+                        binary_dt_model, X, y_binary
+                    )
+                    binary_dt_results = {
+                        "f1": f1,
+                        "accuracy": accuracy,
+                        "precision": precision,
+                        "recall": recall,
+                    }
             
             results["results"][layer][func_name] = {
-                "decision_tree": {
-                    "mse": dt_mse,
-                    "r2": dt_r2,
-                },
-                "binary_decision_tree": {
-                    "f1": None,
-                    "accuracy": None,
-                },
+                "decision_tree": regular_dt_results,
+                "binary_decision_tree": binary_dt_results,
             }
     
     # Save decision tree results (like training script does)

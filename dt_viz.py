@@ -13,7 +13,7 @@ import graphviz
 # %%
 # Configuration - modify these values to select neuron and layer
 LAYER = 3
-NEURON_IDX = 1199
+NEURON_IDX = 2018
 DATA_PATH = 'neuron_simulation/decision_trees_new/decision_trees_bs/decision_trees_mlp_neuron_6000.pkl'
 MAX_DEPTH = None  # Set to an integer to limit tree depth in visualization
 SAVE_PATH = None  # Set to a file path to save the visualization
@@ -244,7 +244,7 @@ graph = create_interactive_tree(
     LAYER,
     r2_score,
     feature_names,
-    max_depth=4,
+    max_depth=8,
     save_path=True,
 )
 

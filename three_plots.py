@@ -26,8 +26,8 @@ model_name = "Baidicoot/Othello-GPT-Transformer-Lens"
 model = utils.get_model(model_name, device)
 
 # %%
-LAYER = 1
-NEURON = 748
+LAYER = 3
+NEURON = 2018
 
 # %%
 MIDDLE_SQUARES = [27, 28, 35, 36]

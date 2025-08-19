@@ -21,7 +21,7 @@ with open(
 ) as f:
     data = pickle.load(f)
 layer = 3
-neuron_idx = 1199
+neuron_idx = 2018
 function_name = list(data[layer].keys())[0]
 tree_model = data[layer][function_name]["decision_tree"]["model"].estimators_[
     neuron_idx
@@ -32,7 +32,7 @@ batch_size = 32
 # %%
 move = neel_utils.id_to_square([20, 19, 41, 21, 27, 34, 13, 33, 29, 12, 26, 43, 38, 14, 10, 48, 42, 18, 28, 32, 49, 22, 4, 15, 44, 50, 37, 31, 39, 2, 55, 57, 51, 6, 17, 24, 40, 47, 45, 46, 54, 52, 23])
 features = games_batch_to_input_tokens_flipped_bs_classifier_input_BLC([move]).numpy()[:, -1]
-tree_model.apply(features)
+print(tree_model.decision_path(features))
 
 # %%
 def othello_generator(
@@ -72,7 +72,7 @@ for batch in tqdm(generator, desc = "dt max activating examples", total = n_batc
     batch_input = einops.rearrange(
         batch_features[:, :59].numpy(), "batch seq n_features -> (batch seq) n_features"
     )
-    node_ids = tree_model.apply(batch_input)
+    node_ids = tree_model.apply(batch_input) # can retrace branch and add to all parent nodes as well
     for i, node_id in enumerate(node_ids):
         game_idx = i // 59  # Now dividing by 59 instead of 60
         move_idx = i % 59   # move_idx ranges from 0-58
@@ -104,7 +104,7 @@ with gzip.open(f"leaf_examples_L{layer}_N{neuron_idx}.pkl.gz", "rb") as f:
 node_data = loaded_data['node_data']
 
 # %%
-selected = node_data[334]
+selected = node_data[326]
 for example in selected[:10]:
     game, move_idx = example['game'], example['move_idx']
     focus_states, focus_legal_moves, focus_legal_moves_annotation = (
