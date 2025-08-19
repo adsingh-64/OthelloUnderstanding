@@ -46,24 +46,24 @@ keys = [f"blocks.{6}.hook_resid_post"]
 focus_cache_tensor = t.empty((10000, 59, model.cfg.d_model), device=device)
 
 for i in range(0, len(train_data["encoded_inputs"]), batch_size):
-    batch_inputs = train_data["encoded_inputs"][i:i+batch_size]
+    batch_inputs = train_data["encoded_inputs"][i : i + batch_size]
     _, cache = model.run_with_cache(
         t.tensor(batch_inputs).to(device),
         names_filter=lambda name: name in keys,
     )
-    focus_cache_tensor[i:i+batch_size] = cache[keys[0]]
+    focus_cache_tensor[i : i + batch_size] = cache[keys[0]]
 
 
 # %%
 probe = t.load(
-        f"20250805_135718/probe_{6}.pt",
-        map_location=str(device),
-        weights_only="True",
-    )
+    f"20250805_135718/probe_{6}.pt",
+    map_location=str(device),
+    weights_only="True",
+)
 
 subspace_sims = plot_cosine_sim(probe)
 
-#%%
+# %%
 neel_utils.plot_board_values(
     subspace_sims[:8],
     width=1000,
@@ -72,8 +72,10 @@ neel_utils.plot_board_values(
     board_titles=[f"" for i in range(1, 9)],
 )
 
-#%%
-focus_cache_tensor = directional_ablation_single_square(focus_cache_tensor.double(), probe[:, 0, 3, :]).float()
+# %%
+focus_cache_tensor = directional_ablation_single_square(
+    focus_cache_tensor.double(), probe[:, 0, 3, :]
+).float()
 
 # %%
 probe_out = einops.einsum(
@@ -85,7 +87,7 @@ probe_predictions = probe_out.argmax(dim=-1)
 print(probe_predictions.shape)
 
 # %%
-probe_board = (probe_out == probe_out.max(dim = -1, keepdim =True).values).long().cpu()
+probe_board = (probe_out == probe_out.max(dim=-1, keepdim=True).values).long().cpu()
 
 # %%
 accuracies = t.all(
@@ -107,6 +109,7 @@ neel_utils.plot_board_values(
 
 # %%
 import json
-with open('20250805_150845/accuracy.json', 'w') as f:
+
+with open("20250805_150845/accuracy.json", "w") as f:
     json.dump(final_accuracy.tolist(), f)
 # %%

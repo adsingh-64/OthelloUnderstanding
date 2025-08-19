@@ -49,8 +49,8 @@ print(f"Feature vector shape: {filtered_features[0].shape}")
 # Load decision trees for all layers
 decision_tree_files = [
     "decision_trees_binary/decision_trees_mlp_neuron_60.pkl",
-    "decision_trees_binary/decision_trees_mlp_neuron_600.pkl", 
-    "decision_trees_binary/decision_trees_mlp_neuron_6000.pkl"
+    "decision_trees_binary/decision_trees_mlp_neuron_600.pkl",
+    "decision_trees_binary/decision_trees_mlp_neuron_6000.pkl",
 ]
 
 # We'll use the one with most training data (6000)
@@ -60,6 +60,7 @@ print(f"Loading decision trees from: {dt_file}")
 with open(dt_file, "rb") as f:
     decision_trees = pickle.load(f)
 
+
 # %%
 # Function to evaluate recall for each neuron across all layers
 def evaluate_neuron_recall(decision_trees, filtered_features, layers=range(6)):
@@ -68,29 +69,29 @@ def evaluate_neuron_recall(decision_trees, filtered_features, layers=range(6)):
     Recall = (# of times DT predicts active when G2 flipped) / (total # of G2 flipped examples)
     """
     neuron_recalls = {}
-    
+
     for layer in layers:
         if layer not in decision_trees:
             continue
-            
-        func_name = 'games_batch_to_input_tokens_flipped_bs_classifier_input_BLC'
+
+        func_name = "games_batch_to_input_tokens_flipped_bs_classifier_input_BLC"
         if func_name not in decision_trees[layer]:
             continue
-            
-        if 'binary_decision_tree' not in decision_trees[layer][func_name]:
+
+        if "binary_decision_tree" not in decision_trees[layer][func_name]:
             continue
-            
-        binary_dt_data = decision_trees[layer][func_name]['binary_decision_tree']
-        
+
+        binary_dt_data = decision_trees[layer][func_name]["binary_decision_tree"]
+
         # The model is stored under the 'model' key
-        if 'model' not in binary_dt_data:
+        if "model" not in binary_dt_data:
             continue
-            
-        multi_output_model = binary_dt_data['model']
-        
+
+        multi_output_model = binary_dt_data["model"]
+
         # Get predictions for all neurons in this layer
         predictions = multi_output_model.predict(filtered_features)
-        
+
         # Calculate recall for each neuron
         n_neurons = predictions.shape[1]
         for neuron_idx in range(n_neurons):
@@ -98,8 +99,9 @@ def evaluate_neuron_recall(decision_trees, filtered_features, layers=range(6)):
             neuron_predictions = predictions[:, neuron_idx]
             recall = np.mean(neuron_predictions)
             neuron_recalls[(layer, neuron_idx)] = recall
-    
+
     return neuron_recalls
+
 
 # %%
 # Calculate recalls for all neurons
@@ -112,9 +114,9 @@ sorted_neurons = sorted(neuron_recalls.items(), key=lambda x: x[1], reverse=True
 
 # Display top neurons by recall
 print("\nTop 20 neurons by recall (DT activation rate on G2-flipped examples):")
-print("="*60)
+print("=" * 60)
 print(f"{'Rank':<6} {'Layer':<7} {'Neuron':<8} {'Recall':<10}")
-print("-"*60)
+print("-" * 60)
 
 for rank, ((layer, neuron), recall) in enumerate(sorted_neurons[:20], 1):
     print(f"{rank:<6} {layer:<7} {neuron:<8} {recall:<10.4f}")
@@ -122,7 +124,7 @@ for rank, ((layer, neuron), recall) in enumerate(sorted_neurons[:20], 1):
 # %%
 # Compare with attribution-based ranking from find_topk.py
 print("\n\nComparison with attribution-based ranking:")
-print("="*60)
+print("=" * 60)
 
 # Load the attribution results (you computed these in find_topk.py)
 layer = 5
@@ -164,26 +166,32 @@ attrs /= len(filtered_games_encoded)
 # Get top neurons by attribution
 attrs_flattened = attrs.flatten()
 values, neuron_idx = attrs_flattened.topk(20)
-neuron_idx_by_layer = [(idx // model.cfg.d_model, idx % model.cfg.d_model) for idx in neuron_idx]
+neuron_idx_by_layer = [
+    (idx // model.cfg.d_model, idx % model.cfg.d_model) for idx in neuron_idx
+]
 
 # %%
 # Display comparison
 print("\nTop 20 neurons by Attribution vs Decision Tree Recall:")
-print("="*80)
-print(f"{'Rank':<6} {'Attribution-based':<25} {'DT Recall-based':<25} {'DT Recall Value':<15}")
+print("=" * 80)
+print(
+    f"{'Rank':<6} {'Attribution-based':<25} {'DT Recall-based':<25} {'DT Recall Value':<15}"
+)
 print(f"{'':6} {'(Layer, Neuron)':<25} {'(Layer, Neuron)':<25}")
-print("-"*80)
+print("-" * 80)
 
 for rank in range(20):
     # Attribution-based
     attr_layer, attr_neuron = neuron_idx_by_layer[rank]
     attr_value = values[rank].item()
-    
+
     # DT recall-based
     dt_layer, dt_neuron = sorted_neurons[rank][0]
     dt_recall = sorted_neurons[rank][1]
-    
-    print(f"{rank+1:<6} ({attr_layer}, {attr_neuron:<4})<25 ({dt_layer}, {dt_neuron:<4})<25 {dt_recall:<15.4f}")
+
+    print(
+        f"{rank+1:<6} ({attr_layer}, {attr_neuron:<4})<25 ({dt_layer}, {dt_neuron:<4})<25 {dt_recall:<15.4f}"
+    )
 
 # %%
 # Check overlap between top neurons from both methods
@@ -201,8 +209,13 @@ if overlap:
     print(f"\nNeurons in both top {top_k} lists:")
     for layer, neuron in sorted(overlap):
         attr_rank = neuron_idx_by_layer.index((layer, neuron)) + 1
-        dt_rank = next(i for i, (n, _) in enumerate(sorted_neurons) if n == (layer, neuron)) + 1
+        dt_rank = (
+            next(i for i, (n, _) in enumerate(sorted_neurons) if n == (layer, neuron))
+            + 1
+        )
         dt_recall = neuron_recalls[(layer, neuron)]
-        print(f"  Layer {layer}, Neuron {neuron}: Attribution rank #{attr_rank}, DT rank #{dt_rank}, Recall={dt_recall:.4f}")
+        print(
+            f"  Layer {layer}, Neuron {neuron}: Attribution rank #{attr_rank}, DT rank #{dt_rank}, Recall={dt_recall:.4f}"
+        )
 
 # %%
