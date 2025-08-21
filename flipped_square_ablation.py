@@ -469,7 +469,7 @@ for power in range(15):  # 2^0 to 2^14
     )
 
 with open("g2_ablation_results_random.json", "w") as f:
-    json.dump(ablation_results, f, indent=2)
+    json.dump(random_ablation_results, f, indent=2)
 
 # %%
 # Plot ablation results
