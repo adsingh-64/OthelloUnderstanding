@@ -53,9 +53,6 @@ x_ticks = [2**i for i in range(0, 14)]
 plt.xticks(x_ticks, [str(x) for x in x_ticks])
 
 plt.tight_layout()
+plt.savefig("g2_ablation_comparison.png", dpi=300, bbox_inches="tight")
 plt.show()
 
-# %%
-plt.savefig("g2_ablation_comparison.png", dpi=300, bbox_inches='tight')
-
-# %%
