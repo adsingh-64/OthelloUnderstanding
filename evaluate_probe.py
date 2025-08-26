@@ -106,13 +106,13 @@ neel_utils.plot_board_values(
 # BOARD STATE + FLIPPED Comparison
 ###
 flipped_probe_dict = {
-    i: t.load(f"flippedprobes/resid{i}_flipped.pth", map_location=device).squeeze()
+    i: t.load(f"flipped_probes/resid_{i}_flipped.pth", map_location=device).squeeze()
     for i in range(model.cfg.n_layers)
 }
 
 board_state_probe_dict = {
     i: t.load(
-        f"linear_probes/Othello-GPT-Transformer-Lens_othello_mine_yours_probelayer{i}.pth",
+        f"linear_probes/Othello-GPT-Transformer-Lens_othello_mine_yours_probe_layer_{i}.pth",
         map_location=device,
     )["linear_probe"].squeeze()
     for i in range(model.cfg.n_layers)
@@ -129,6 +129,8 @@ print(flipped.shape), print(mine_yours.shape)
 # %%
 mine_yours_normed = mine_yours / mine_yours.norm(dim=1, keepdim=True)
 flipped_normed = flipped / flipped.norm(dim=1, keepdim=True)
+
+# b/w layers, averaged over squares
 mine_yours_cosine_sim = einops.reduce(
     einops.einsum(
         mine_yours_normed,
@@ -138,6 +140,22 @@ mine_yours_cosine_sim = einops.reduce(
     "layer_1 layer_2 row col -> layer_1 layer_2",
     "mean",
 )
+
+# b/w squares, averaged over layers
+mine_yours_cosine_sim_square = einops.reduce(
+    einops.rearrange(
+        einops.einsum(
+            mine_yours_normed,
+            mine_yours_normed,
+            "layer d_model row_1 col_1, layer d_model row_2 col_2 -> layer row_1 col_1 row_2 col_2",
+        ),
+        "layer row_1 col_1 row_2 col_2 -> layer (row_1 col_1) (row_2 col_2)",
+    ),
+    "layer squares_1 squares_2 -> squares_1 squares_2",
+    "mean",
+)
+
+# b/w layers, averaged over squares
 flipped_cosine_sim = einops.reduce(
     einops.einsum(
         flipped_normed,
@@ -147,6 +165,22 @@ flipped_cosine_sim = einops.reduce(
     "layer_1 layer_2 row col -> layer_1 layer_2",
     "mean",
 )
+
+# b/w squares, averaged over layers
+flipped_cosine_sim_square = einops.reduce(
+    einops.rearrange(
+        einops.einsum(
+            flipped_normed,
+            flipped_normed,
+            "layer d_model row_1 col_1, layer d_model row_2 col_2 -> layer row_1 col_1 row_2 col_2",
+        ),
+        "layer row_1 col_1 row_2 col_2 -> layer (row_1 col_1) (row_2 col_2)"
+    ),
+    "layer squares_1 squares_2 -> squares_1 squares_2", 
+    "mean",
+)
+
+# b/w layers, averaged over squares
 mine_yours_flipped_cosine_sim = einops.reduce(
     einops.einsum(
         mine_yours_normed,
@@ -156,6 +190,8 @@ mine_yours_flipped_cosine_sim = einops.reduce(
     "layer_1 layer_2 row col -> layer_1 layer_2",
     "mean",
 )
+
+# b/w squares, averaged over layers
 mine_yours_flipped_cosine_sim_square = einops.reduce(
     einops.rearrange(
         einops.einsum(
@@ -170,6 +206,11 @@ mine_yours_flipped_cosine_sim_square = einops.reduce(
 )
 
 # %%
+labels = []
+for row in range(8):
+    for col in range(8):
+        labels.append(f"{chr(65+col)}{row}")
+
 plt.figure(figsize=(8, 6))
 sns.heatmap(
     mine_yours_cosine_sim.detach().cpu().numpy(),
@@ -184,6 +225,25 @@ plt.xlabel("Layer")
 plt.ylabel("Layer")
 plt.show()
 
+plt.figure(figsize=(12, 10))
+ax = sns.heatmap(
+    mine_yours_cosine_sim_square.detach().cpu().numpy(),
+    annot=False,
+    cmap="RdBu_r",
+    center=0,
+    square=True,
+    cbar_kws={"label": "Cosine Similarity"},
+)
+ax.set_xticks(np.arange(64) + 0.5)
+ax.set_yticks(np.arange(64) + 0.5)
+ax.set_xticklabels(labels, rotation=90, fontsize=8)
+ax.set_yticklabels(labels, rotation=0, fontsize=8)
+plt.title("Mine-Yours Cosine Similarity By Square (Averaged over layers)")
+plt.xlabel("Square (flipped probe)")
+plt.ylabel("Square (mine-yours probe)")
+plt.tight_layout()
+plt.show()
+
 plt.figure(figsize=(8, 6))
 sns.heatmap(
     flipped_cosine_sim.detach().cpu().numpy(),
@@ -196,6 +256,26 @@ sns.heatmap(
 plt.title("Flipped Cosine Similarity Across Layers (Averaged over squares)")
 plt.xlabel("Layer")
 plt.ylabel("Layer")
+plt.show()
+
+plt.figure(figsize=(12, 10))
+
+ax = sns.heatmap(
+    flipped_cosine_sim_square.detach().cpu().numpy(),
+    annot=False,
+    cmap="RdBu_r",
+    center=0,
+    square=True,
+    cbar_kws={"label": "Cosine Similarity"},
+)
+ax.set_xticks(np.arange(64) + 0.5)
+ax.set_yticks(np.arange(64) + 0.5)
+ax.set_xticklabels(labels, rotation=90, fontsize=8)
+ax.set_yticklabels(labels, rotation=0, fontsize=8)
+plt.title("Flipped Cosine Similarity By Square (Averaged over layers)")
+plt.xlabel("Square (flipped probe)")
+plt.ylabel("Square (mine-yours probe)")
+plt.tight_layout()
 plt.show()
 
 plt.figure(figsize=(8, 6))
@@ -214,16 +294,8 @@ plt.xlabel("Layer (mine - yours)")
 plt.ylabel("Layer (flipped)")
 plt.show()
 
-# %%
-# %%
+
 plt.figure(figsize=(12, 10))
-
-# Create chess notation labels A0-H7
-chess_labels = []
-for row in range(8):
-    for col in range(8):
-        chess_labels.append(f"{chr(65+col)}{row}")  # A-H for columns, 0-7 for rows
-
 ax = sns.heatmap(
     mine_yours_flipped_cosine_sim_square.detach().cpu().numpy(),
     annot=False,
@@ -232,13 +304,10 @@ ax = sns.heatmap(
     square=True,
     cbar_kws={"label": "Cosine Similarity"},
 )
-
-# Set custom tick labels
 ax.set_xticks(np.arange(64) + 0.5)
 ax.set_yticks(np.arange(64) + 0.5)
-ax.set_xticklabels(chess_labels, rotation=90, fontsize=8)
-ax.set_yticklabels(chess_labels, rotation=0, fontsize=8)
-
+ax.set_xticklabels(labels, rotation=90, fontsize=8)
+ax.set_yticklabels(labels, rotation=0, fontsize=8)
 plt.title("Mine-Yours vs Flipped Cosine Similarity By Square (Averaged over layers)")
 plt.xlabel("Square (flipped probe)")
 plt.ylabel("Square (mine-yours probe)")
