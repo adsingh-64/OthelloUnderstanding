@@ -108,10 +108,10 @@ if MAIN:
     with model.trace(t.tensor(game_encoded)):
         hidden_states = []
         hidden_grads = []
-        for i in range(3):
+        for i in range(4):
             hidden_states.append(model.blocks[i].mlp.hook_post.output[0, -1].save())
             hidden_grads.append(model.blocks[i].mlp.hook_post.output.grad[0, -1].save())
-        metric = model.blocks[3].mlp.hook_post.output[0, -1, 2018].save()
+        metric = model.blocks[4].mlp.hook_post.output[0, -1, 2046].save()
         metric.backward()
     hidden_attrs = [
         hidden_state * hidden_grad

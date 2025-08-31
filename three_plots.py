@@ -26,13 +26,14 @@ model_name = "Baidicoot/Othello-GPT-Transformer-Lens"
 model = utils.get_model(model_name, device)
 
 # %%
-LAYER = 2
-NEURON = 1357
+LAYER = 4
+NEURON = 2046
 
 # %%
 MIDDLE_SQUARES = [27, 28, 35, 36]
 ALL_SQUARES = [i for i in range(64) if i not in MIDDLE_SQUARES]
-probe_dict = {
+
+board_state_probe_dict = {
     i: t.load(
         f"linear_probes/Othello-GPT-Transformer-Lens_othello_mine_yours_probe_layer_{i}.pth",
         map_location=str(device),
@@ -40,13 +41,27 @@ probe_dict = {
     )["linear_probe"].squeeze()
     for i in range(model.cfg.n_layers)
 }
-probe = probe_dict[LAYER - 1]
-blank_probe = probe[..., 1] - (probe[..., 0] + probe[..., 2]) / 2
-my_probe = probe[..., 0] - probe[..., 2]
+
+flipped_probe_dict = {
+    i: t.load(
+        f"flipped_probes/resid_{i}_flipped.pth",
+        map_location=str(device),
+        weights_only="True",
+    ).squeeze()
+    for i in range(model.cfg.n_layers)
+}
+
+board_state_probe = board_state_probe_dict[LAYER - 1]
+blank_probe = board_state_probe[..., 1] - (board_state_probe[..., 0] + board_state_probe[..., 2]) / 2
+my_probe = board_state_probe[..., 0] - board_state_probe[..., 2]
 blank_probe_normalised = blank_probe / blank_probe.norm(dim=0, keepdim=True)
 my_probe_normalised = my_probe / my_probe.norm(dim=0, keepdim=True)
 # Set the center blank probes to 0, since they're never blank so the probe is meaningless
 blank_probe_normalised[:, [3, 3, 4, 4], [3, 4, 3, 4]] = 0.0
+
+flipped_probe = flipped_probe_dict[LAYER - 1]
+flipped_probe = flipped_probe[..., 0] - flipped_probe[..., 1]
+flipped_probe_normalised = flipped_probe / flipped_probe.norm(dim=0, keepdim=True)
 
 # %%
 def get_w_in(
@@ -129,20 +144,22 @@ def calculate_neuron_unembedding(
 w_in_blank = calculate_neuron_input_weights(
     model, blank_probe_normalised, LAYER, NEURON
 )
+
 w_in_my = calculate_neuron_input_weights(
     model, my_probe_normalised, LAYER, NEURON
 )
-w_out_unembed = calculate_neuron_unembedding(
-    model, LAYER, NEURON
-)
+
+w_in_flipped = calculate_neuron_input_weights(model, flipped_probe_normalised, LAYER, NEURON)
 
 neel_utils.plot_board_values(
-    t.stack([w_in_blank, w_in_my]),
+    t.stack([w_in_blank, w_in_my, w_in_flipped]),
     title=f"L{LAYER}N{NEURON} reading",
-    board_titles=["Blank In", "My In"],
+    board_titles=["Blank In", "My In", "Flipped In"],
     width=650,
     height=380,
 )
+
+# w_out_unembed = calculate_neuron_unembedding(model, LAYER, NEURON)
 
 # neel_utils.plot_board_values(
 #     w_out_unembed,
@@ -152,10 +169,10 @@ neel_utils.plot_board_values(
 # )
 
 # %%
-probe_writing = probe_dict[LAYER]
-my_probe = probe_writing[..., 0] - probe_writing[..., 2]
+board_state_probe_writing = board_state_probe_dict[LAYER]
+my_probe = board_state_probe_writing[..., 0] - board_state_probe_writing[..., 2]
 my_probe_normalised = my_probe / my_probe.norm(dim=0, keepdim=True)
-blank_probe = probe[..., 1] - (probe[..., 0] + probe[..., 2]) / 2
+blank_probe = board_state_probe_writing[..., 1] - (board_state_probe_writing[..., 0] + board_state_probe_writing[..., 2]) / 2
 blank_probe_normalised = blank_probe / blank_probe.norm(dim=0, keepdim=True)
 w_out_my = calculate_neuron_output_weights(
     model, my_probe_normalised, LAYER, NEURON
@@ -172,3 +189,44 @@ neel_utils.plot_board_values(
 )
 
 # %%
+W_in = model.W_in.detach().clone()
+W_out = model.W_out.detach().clone()
+
+
+def read_from(layer, neuron, k=5):
+    neuron_encoder = W_in[layer, :, neuron] / W_in[layer, :, neuron].norm()
+    upstream = einops.einsum(
+        W_out[:layer, :, :] / W_out[:layer, :, :].norm(dim=-1, keepdim=True),
+        neuron_encoder,
+        "layers neurons d_model, d_model ->layers neurons",
+    )
+    values, indices = upstream.flatten().topk(k)
+    values, indices = values.tolist(), indices.tolist()
+    indices = [(index // model.cfg.d_mlp, index % model.cfg.d_mlp) for index in indices]
+
+    return values, indices
+
+
+def write_to(layer, neuron, k=5):
+    if layer == model.cfg.n_layers - 1:
+        return None
+    neuron_decoder = W_out[layer, neuron, :] / W_out[layer, neuron, :].norm()
+    downstream = einops.einsum(
+        W_in[layer + 1 :, :, :] / W_in[layer + 1 :, :, :].norm(dim=1, keepdim=True),
+        neuron_decoder,
+        "layers d_model neurons, d_model -> layers neurons",
+    )
+    values, indices = downstream.flatten().topk(k)
+    values, indices = values.tolist(), indices.tolist()
+    indices = [
+        (layer + 1 + index // model.cfg.d_mlp, index % model.cfg.d_mlp)
+        for index in indices
+    ]
+
+    return values, indices
+
+
+values, indices = write_to(4, 2046)
+for value, index in zip(values, indices):
+    L, N = index
+    print(f"L{L}N{N} | cosine sim: {value}")

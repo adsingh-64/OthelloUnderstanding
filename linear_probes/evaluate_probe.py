@@ -14,9 +14,14 @@ import neel_utils as neel_utils
 import matplotlib.pyplot as plt
 import seaborn as sns
 import json
+from pathlib import Path
+from dotenv import load_dotenv
 
 # from ablate_probe import directional_ablation_single_square, plot_cosine_sim
 
+CURRENT_DIR = Path.cwd()
+PARENT_DIR = CURRENT_DIR.parent
+load_dotenv()
 device = "cuda" if t.cuda.is_available() else "cpu"
 
 # %%
@@ -35,8 +40,84 @@ train_data = construct_othello_dataset(
 
 # %%
 # FLIPPED probe evaluation
-flipped_probe = t.load("flipped_probes/resid_5_flipped.pth", map_location=t.device("cpu")).squeeze()
+layer = 5
+n_moves = 5
+flipped_probe = t.load(f"{PARENT_DIR}/flipped_probes/resid_{layer}_flipped.pth", map_location=t.device("cpu")).squeeze()
 
+states, legal_moves, legal_moves_annotation = neel_utils.get_board_states_and_legal_moves(
+    t.tensor(train_data["decoded_inputs"][0][:n_moves], dtype=t.long, device=device)
+)
+
+neel_utils.plot_board_values(
+    states,
+    title="Board states",
+    width=800,
+    height = 500,
+    boards_per_row=5,
+    board_titles=[
+        f"Move {i}, {'black' if i % 2 == 1 else 'white'} to play" for i in range(n_moves)
+    ],
+    text=np.where(to_numpy(legal_moves), "o", "").tolist(),
+)
+
+with model.trace(t.tensor(train_data["encoded_inputs"][0][:n_moves], dtype=t.long, device=device)):
+    out = model.blocks[layer].output.save()
+
+probe_out = einops.einsum(out, flipped_probe, "batch seq d_model, d_model row col class -> seq row col class")
+probe_out = t.nn.functional.softmax(probe_out, dim = -1)
+probe_out = einops.rearrange(probe_out, "seq row col class -> (seq class) row col")
+
+neel_utils.plot_board_values(
+    probe_out,
+    title="Flipped probe outputs",
+    width=400,
+    height=1500,
+    boards_per_row=2,
+    # board_titles=[
+    #     f"Move {i}, {'black' if i % 2 == 1 else 'white'} to play"
+    #     for i in range(n_moves)
+    # ],
+    # text=np.where(to_numpy(legal_moves), "o", "").tolist(),
+)
+
+# %%
+W_in = model.W_in.detach().clone()
+W_out = model.W_out.detach().clone()
+
+def read_from(layer, neuron, k = 5):
+    neuron_encoder = W_in[layer, :, neuron] / W_in[layer, :, neuron].norm()
+    upstream = einops.einsum(
+        W_out[:layer, :, :] / W_out[:layer, :, :].norm(dim=-1, keepdim=True),
+        neuron_encoder,
+        "layers neurons d_model, d_model ->layers neurons",
+    )
+    values, indices = upstream.flatten().topk(k)
+    values, indices = values.tolist(), indices.tolist()
+    indices = [(index // model.cfg.d_mlp, index % model.cfg.d_mlp) for index in indices]
+
+    return values, indices
+
+def write_to(layer, neuron, k = 5):
+    if layer == model.cfg.n_layers - 1:
+        return None
+    neuron_decoder = W_out[layer, neuron, :] / W_out[layer, neuron, :].norm()
+    downstream = einops.einsum(
+        W_in[layer + 1:, :, :] / W_in[layer + 1:, :, :].norm(dim=1, keepdim=True),
+        neuron_decoder,
+        "layers d_model neurons, d_model -> layers neurons",
+    )
+    values, indices = downstream.flatten().topk(k)
+    values, indices = values.tolist(), indices.tolist()
+    indices = [(layer + 1 + index // model.cfg.d_mlp, index % model.cfg.d_mlp) for index in indices]
+
+    return values, indices
+
+values, indices = write_to(4, 2046)
+for value, index in zip(values, indices):
+    L, N = index
+    print(f"L{L}N{N} | cosine sim: {value}")
+
+# %%
 batch_size = 64
 keys = [f"blocks.{5}.hook_resid_post"]
 focus_cache_tensor = t.empty((dataset_size, 59, model.cfg.d_model), device=device)
@@ -315,6 +396,7 @@ plt.tight_layout()
 plt.show()
 
 # %%
+# Compare is flipped with flipped square neurons
 W_in = model.W_in.clone().detach().to(device)
 
 with open("flipped_square_ablation_results/G2_dla_rankings.json", "r") as f:

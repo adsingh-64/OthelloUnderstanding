@@ -13,6 +13,7 @@ wandb/
 **.gz
 **.pt
 **.json
+**.env
 autoencoders/*
 venv/
 

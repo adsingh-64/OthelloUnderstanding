@@ -3,7 +3,7 @@ import pickle
 import numpy as np
 import circuits.othello_utils as othello_utils
 import neel_utils as neel_utils
-from dt_viz import create_placeholder_feature_names
+from decision_tree_viz.dt_viz import create_placeholder_feature_names
 
 # %%
 # Load your tree

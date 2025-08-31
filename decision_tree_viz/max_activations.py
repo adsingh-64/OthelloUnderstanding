@@ -9,7 +9,7 @@ import einops
 from tqdm.notebook import tqdm
 import math
 import gzip
-from single_game_analysis import get_board_states_and_legal_moves
+from flipped_square_ablation_results.single_game_analysis import get_board_states_and_legal_moves
 import torch as t
 from transformer_lens.utils import to_numpy
 import numpy as np
