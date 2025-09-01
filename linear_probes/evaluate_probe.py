@@ -12,23 +12,23 @@ from IPython.display import HTML, display
 from jaxtyping import Bool, Float, Int
 import neel_utils as neel_utils
 import matplotlib.pyplot as plt
-import seaborn as sns
+#import seaborn as sns
 import json
 from pathlib import Path
-from dotenv import load_dotenv
+#from dotenv import load_dotenv
 
 # from ablate_probe import directional_ablation_single_square, plot_cosine_sim
 
 CURRENT_DIR = Path.cwd()
 PARENT_DIR = CURRENT_DIR.parent
-load_dotenv()
+#load_dotenv()
 device = "cuda" if t.cuda.is_available() else "cpu"
 
 # %%
 model_name = "Baidicoot/Othello-GPT-Transformer-Lens"
 dataset_size = 50
 custom_functions = [
-    othello_utils.games_batch_to_flipped_classifier_input_BLC,
+    #othello_utils.games_batch_to_flipped_classifier_input_BLC,
 ]
 model = utils.get_model(model_name, device)
 train_data = construct_othello_dataset(
@@ -39,10 +39,10 @@ train_data = construct_othello_dataset(
 )
 
 # %%
-# FLIPPED probe evaluation
+# Played probe evaluation
 layer = 5
 n_moves = 5
-flipped_probe = t.load(f"{PARENT_DIR}/flipped_probes/resid_{layer}_flipped.pth", map_location=t.device("cpu")).squeeze()
+played_probe = t.load(f"{PARENT_DIR}/played_probes/resid_{layer}_played.pth", map_location=device)
 
 states, legal_moves, legal_moves_annotation = neel_utils.get_board_states_and_legal_moves(
     t.tensor(train_data["decoded_inputs"][0][:n_moves], dtype=t.long, device=device)
@@ -63,16 +63,15 @@ neel_utils.plot_board_values(
 with model.trace(t.tensor(train_data["encoded_inputs"][0][:n_moves], dtype=t.long, device=device)):
     out = model.blocks[layer].output.save()
 
-probe_out = einops.einsum(out, flipped_probe, "batch seq d_model, d_model row col class -> seq row col class")
-probe_out = t.nn.functional.softmax(probe_out, dim = -1)
-probe_out = einops.rearrange(probe_out, "seq row col class -> (seq class) row col")
+probe_out = einops.einsum(out, played_probe, "batch seq d_model, d_model row col -> seq row col")
+probe_out = t.sigmoid(probe_out)
 
 neel_utils.plot_board_values(
     probe_out,
-    title="Flipped probe outputs",
+    title="played probe outputs",
     width=400,
     height=1500,
-    boards_per_row=2,
+    boards_per_row=1,
     # board_titles=[
     #     f"Move {i}, {'black' if i % 2 == 1 else 'white'} to play"
     #     for i in range(n_moves)

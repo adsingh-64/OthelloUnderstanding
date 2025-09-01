@@ -1,3 +1,5 @@
+export UV_CACHE_DIR=/workspace/.uv-cache
+echo 'export UV_CACHE_DIR=/workspace/.uv-cache' >> $HOME/.bashrc
 curl -LsSf https://astral.sh/uv/install.sh | sh
 source $HOME/.local/bin/env
 uv venv --python 3.12 --seed
