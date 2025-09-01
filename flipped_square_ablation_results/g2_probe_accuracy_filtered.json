@@ -1,0 +1,8 @@
+{
+  "n_examples": 1212,
+  "g2_accuracy": 0.9966996908187866,
+  "prediction_distribution": {
+    "empty": 4,
+    "theirs": 1208
+  }
+}
