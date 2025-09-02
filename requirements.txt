@@ -16,6 +16,7 @@ transformers == 4.40.0
 wandb == 0.16.6
 scikit-learn
 transformer_lens
-jaxtyping
+jaxtyping==0.2.28
+typeguard==2.13.3
 numpy<2
 chess

@@ -9,12 +9,16 @@ from sklearn.tree import plot_tree, export_text, export_graphviz
 import numpy as np
 from typing import Optional, List
 import graphviz 
+from pathlib import Path
+
+CURRENT_DIR = Path.cwd()
+PARENT_DIR = CURRENT_DIR.parent
 
 # %%
 # Configuration - modify these values to select neuron and layer
-LAYER = 3
-NEURON_IDX = 2018
-DATA_PATH = 'neuron_simulation/decision_trees_new/decision_trees_bs/decision_trees_mlp_neuron_6000.pkl'
+LAYER = 1
+NEURON_IDX = 421
+DATA_PATH = f'{PARENT_DIR}/neuron_simulation/decision_trees_new/decision_trees_bs/decision_trees_mlp_neuron_6000.pkl'
 MAX_DEPTH = None  # Set to an integer to limit tree depth in visualization
 SAVE_PATH = None  # Set to a file path to save the visualization
 
@@ -164,17 +168,18 @@ def visualize_decision_tree(
 
 
 tree_model, r2_score = get_neuron_decision_tree(data, LAYER, NEURON_IDX, function_name)
-n_features = tree_model.n_features_in_
-feature_names = create_placeholder_feature_names(n_features)
-visualize_decision_tree(
-    tree_model,
-    NEURON_IDX,
-    LAYER,
-    r2_score,
-    feature_names,
-    max_depth=3,
-    save_path=SAVE_PATH,
-)
+print(r2_score)
+# n_features = tree_model.n_features_in_
+# feature_names = create_placeholder_feature_names(n_features)
+# visualize_decision_tree(
+#     tree_model,
+#     NEURON_IDX,
+#     LAYER,
+#     r2_score,
+#     feature_names,
+#     max_depth=3,
+#     save_path=SAVE_PATH,
+# )
 
 # %%
 # APPROACH 2: Interactive HTML Visualization using Graphviz
