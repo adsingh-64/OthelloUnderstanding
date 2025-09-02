@@ -69,64 +69,77 @@ def load_played_probes(
 @jaxtyped
 def get_mine_theirs_normed(
     board_state_probes: dict[int, Float[Tensor, "d_model row col mode"]],
+    normalize: bool = True,
 ) -> dict[int, Float[Tensor, "d_model row col"]]:
     mine_theirs = {
         layer: probe[..., 0] - probe[..., 2]
         for layer, probe in board_state_probes.items()
     }
 
-    mine_theirs_normed = {
-        layer: probe / probe.norm(dim=0, keepdim=True)
-        for layer, probe in mine_theirs.items()
-    }
+    if normalize:
+        mine_theirs = {
+            layer: probe / probe.norm(dim=0, keepdim=True)
+            for layer, probe in mine_theirs.items()
+        }
 
-    return mine_theirs_normed
+    return mine_theirs
 
 
 @jaxtyped
 def get_blank_normed(
     board_state_probes: dict[int, Float[Tensor, "d_model row col mode"]],
+    normalize: bool = True,
 ) -> dict[int, Float[Tensor, "d_model row col"]]:
     blank = {
         layer: probe[..., 1] - (probe[..., 0] + probe[..., 2])/2
         for layer, probe in board_state_probes.items()
     }
 
-    blank_normed = {
-        layer: probe / probe.norm(dim=0, keepdim=True)
-        for layer, probe in blank.items()
-    }
+    if normalize:
+        blank = {
+            layer: probe / probe.norm(dim=0, keepdim=True)
+            for layer, probe in blank.items()
+        }
 
-    return blank_normed
+    return blank
 
 
 @jaxtyped
 def get_flipped_normed(
     flipped_probes: dict[int, Float[Tensor, "d_model row col mode"]],
+    normalize: bool = True,
 ) -> dict[int, Float[Tensor, "d_model row col"]]:
     flipped = {
         layer: probe[..., 0] - probe[..., 1]
         for layer, probe in flipped_probes.items()
     }
 
-    flipped_normed = {
-        layer: probe / probe.norm(dim=0, keepdim=True)
-        for layer, probe in flipped.items()
-    }
+    if normalize:
+        flipped = {
+            layer: probe / probe.norm(dim=0, keepdim=True)
+            for layer, probe in flipped.items()
+        }
 
-    return flipped_normed
+    return flipped
 
 
 @jaxtyped
 def get_played_normed(
     played_probes: dict[int, Float[Tensor, "d_model row col"]],
+    normalize: bool = True,
 ) -> dict[int, Float[Tensor, "d_model row col"]]:
-    played_normed = {
-        layer: probe / probe.norm(dim=0, keepdim=True)
+    played = {
+        layer: probe
         for layer, probe in played_probes.items()
     }
 
-    return played_normed
+    if normalize:
+        played = {
+            layer: probe / probe.norm(dim=0, keepdim=True)
+            for layer, probe in played_probes.items()
+        }
+
+    return played
 
 
 @jaxtyped
@@ -279,8 +292,8 @@ if __name__ == "__main__":
     flipped_normed = get_flipped_normed(flipped_probes)
     played_normed = get_played_normed(played_probes)
 
-    layer = 1
-    neuron = 421
+    layer = 5
+    neuron = 1393
 
     mine_theirs_in, blank_in, flipped_in, played_in = calculate_neuron_inputs(
         model, 

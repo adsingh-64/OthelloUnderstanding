@@ -23,6 +23,9 @@ CURRENT_DIR = Path.cwd()
 PARENT_DIR = CURRENT_DIR.parent
 #load_dotenv()
 device = "cuda" if t.cuda.is_available() else "cpu"
+MIDDLE_SQUARES = [27, 28, 35, 36]
+ALL_SQUARES = [i for i in range(64) if i not in MIDDLE_SQUARES]
+
 
 # %%
 model_name = "Baidicoot/Othello-GPT-Transformer-Lens"
@@ -37,6 +40,32 @@ train_data = construct_othello_dataset(
     split="test",
     device=device,
 )
+
+#%%
+###
+# Compare embeddings with played probe
+###
+played_probe = t.stack([t.load(f"{PARENT_DIR}/played_probes/resid_{layer}_played.pth", map_location=device).flatten(start_dim=-2, end_dim=-1)[:, ALL_SQUARES] for layer in range(model.cfg.n_layers)])
+played_probe_normed = played_probe / played_probe.norm(dim=1, keepdim=True)
+
+W_E = model.W_E[1:].detach().clone()
+W_E_normed = W_E / W_E.norm(dim=-1, keepdim=True)
+
+played_embed_cosine_sims = einops.einsum(W_E_normed, played_probe_normed, "square d_model, layer d_model square -> layer square")
+
+to_plot = t.zeros((model.cfg.n_layers, 8, 8), device=device)
+to_plot.flatten(start_dim=-2, end_dim=-1)[:, ALL_SQUARES] = played_embed_cosine_sims
+
+neel_utils.plot_board_values(
+    to_plot,
+    boards_per_row=4,
+    height = 600,
+    width = 1000,
+    title = "Cosine sim of W_E with played probe",
+    board_titles=[f"layer {layer}" for layer in range(model.cfg.n_layers)]
+)
+
+
 
 # %%
 # Played probe evaluation

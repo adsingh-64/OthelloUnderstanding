@@ -26,17 +26,25 @@ from cosine_sims import (
 )
 
 import json
+import pickle
 from typing import Tuple
 from jaxtyping import Int, Float, jaxtyped
 from typeguard import typechecked
 from functools import partial
 from dataclasses import dataclass
 from joblib import Parallel, delayed
+from pathlib import Path
 
 
 jaxtyped = partial(jaxtyped, typechecker=typechecked)
 device = "cuda" if t.cuda.is_available() else "cpu"
 t.set_grad_enabled(False)
+CURRENT_DIR = Path.cwd()
+PARENT_DIR = CURRENT_DIR.parent
+
+
+MIDDLE_SQUARES = [27, 28, 35, 36]
+ALL_SQUARES = [i for i in range(64) if i not in MIDDLE_SQUARES]
 
 
 @dataclass
@@ -96,7 +104,7 @@ def load_data(
 @jaxtyped
 def extract_activations_for_layer(
     model: NNsightModel,
-    data: Int[Tensor, "n_games n_moves"],
+    data: Int[Tensor, "n_games n_total_moves"],
     layer: int,
     batch_size: int = 256,
     device="cuda",
@@ -114,8 +122,10 @@ def extract_activations_for_layer(
         Dict mapping layer_idx -> activations array (n_games, n_tokens, hidden_dim)
     """
     keys = [f"blocks.{layer}.hook_resid_pre", f"blocks.{layer}.mlp.hook_post"]
-    resid = t.empty((data.shape[0], data.shape[1], model.cfg.d_model))
-    mlp = np.ndarray((data.shape[0], data.shape[1], model.cfg.d_mlp))
+    #resid = t.empty((data.shape[0], data.shape[1], model.cfg.d_model))
+    #mlp = np.ndarray((data.shape[0], data.shape[1], model.cfg.d_mlp))
+    resid = t.empty((data.shape[0], 26, model.cfg.d_model))
+    mlp = np.ndarray((data.shape[0], 26, model.cfg.d_mlp))
 
     for i in range(0, len(data), batch_size):
         batch_inputs = data[i : i + batch_size].to(device)
@@ -124,8 +134,11 @@ def extract_activations_for_layer(
             names_filter=lambda name: name in keys,
         )
 
-        resid[i : i + batch_size] = cache[keys[0]].detach().cpu()
-        mlp[i : i + batch_size] = cache[keys[1]].detach().cpu()
+        # Only focus on moves 5-30
+        #resid[i : i + batch_size] = cache[keys[0]].detach().cpu()
+        #mlp[i : i + batch_size] = cache[keys[1]].detach().cpu()
+        resid[i : i + batch_size] = cache[keys[0]][:, 5:31].detach().cpu()
+        mlp[i : i + batch_size] = cache[keys[1]][:, 5:31].detach().cpu()
 
     return resid, mlp
 
@@ -145,21 +158,41 @@ def prepare_dt_train_data_for_layer(
     Float[np.ndarray, "n_test_samples n_feats"],
     Float[np.ndarray, "n_test_samples d_mlp"],
 ]:
-    board_state_probes = load_board_state_probes(model)
-    flipped_probes = load_flipped_probes(model)
-    played_probes = load_played_probes(model)
+    board_state_probes = load_board_state_probes(
+        model,
+        path=f"{PARENT_DIR}/linear_probes/resid_{{layer}}_board_state.pth"
+    )
+    flipped_probes = load_flipped_probes(
+        model,
+        path=f"{PARENT_DIR}/flipped_probes/resid_{{layer}}_flipped.pth",
+    )
+    played_probes = load_played_probes(
+        model,
+        path=f"{PARENT_DIR}/played_probes/resid_{{layer}}_played.pth",
+    )
 
     mine_theirs = get_mine_theirs_normed(board_state_probes, normalize=False)[layer - 1]
     blank = get_blank_normed(board_state_probes, normalize=False)[layer - 1]
     flipped = get_flipped_normed(flipped_probes, normalize=False)[layer - 1]
     played = get_played_normed(played_probes, normalize=False)[layer - 1]
 
-    all_probe = t.stack([mine_theirs, blank, flipped, played], dim=1)
-    all_probe = einops.rearrange(
-        all_probe, "d_model type row col -> d_model (type row col)"
-    )
+    blank_flat = einops.rearrange(blank, "d_model row col -> d_model (row col)")
+    blank_selected = blank_flat[:, ALL_SQUARES] 
+    
+    played_flat = einops.rearrange(played, "d_model row col -> d_model (row col)")
+    played_selected = played_flat[:, ALL_SQUARES]
+    
+    mine_theirs_flat = einops.rearrange(mine_theirs, "d_model row col -> d_model (row col)")
 
-    # project onto probes
+    flipped_flat = einops.rearrange(flipped, "d_model row col -> d_model (row col)")
+
+    all_probe = t.cat([
+        mine_theirs_flat,   
+        blank_selected,    
+        flipped_flat,  
+        played_selected   
+    ], dim=1)
+
     train_resid_acts = einops.rearrange(
         train_resid_acts, "n_games n_moves d_model -> (n_games n_moves) d_model"
     )
@@ -223,10 +256,10 @@ def train_dt_for_neuron(
     # 1. Initialize the DecisionTreeRegressor with hyperparameters
     #    that prioritize interpretability and prevent overfitting.
     tree = DecisionTreeRegressor(
-        max_depth=8,
+        max_depth=3,
         random_state=42,
-        # min_samples_leaf=50,
-        # min_samples_split=100,
+        min_samples_leaf=50,
+        min_samples_split=100,
         criterion="squared_error",
     )
 
@@ -260,13 +293,66 @@ def train_dt_for_neuron(
     )
 
 
+def train_dt_for_layer(
+    model: NNsightModel,
+    X_train: Float[np.ndarray, "n_train_samples n_feats"],
+    y_train: Float[np.ndarray, "n_train_samples d_mlp"],
+    X_test: Float[np.ndarray, "n_test_samples n_feats"],
+    y_test: Float[np.ndarray, "n_test_samples d_mlp"],
+    layer: int,
+    n_jobs: int = -1,
+) -> DecisionTreeResults:
+    results = Parallel(n_jobs=n_jobs)(
+        delayed(train_dt_for_neuron)(
+            X_train, y_train, X_test, y_test, layer, neuron
+        )
+        for neuron in range(model.cfg.d_mlp)
+    )
+    return results
+
+
+def save_dt_results(dt_out: DecisionTreeResults, output_dir: str = "results"):
+    """Save decision tree results with both model and metrics."""
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Create descriptive filename
+    filename_base = f"layer{dt_out.layer}_neuron{dt_out.neuron}_depth{int(dt_out.tree.get_depth())}"
+    
+    # 1. Save the trained tree model (pickle)
+    model_path = output_dir / f"{filename_base}_model.pkl"
+    with open(model_path, 'wb') as f:
+        pickle.dump(dt_out.tree, f)
+    
+    # 2. Save metrics as JSON (human-readable)
+    metrics = {
+        "layer": dt_out.layer,
+        "neuron": dt_out.neuron,
+        "train_R2": float(dt_out.train_R2),
+        "train_MSE": float(dt_out.train_MSE),
+        "test_R2": float(dt_out.test_R2),
+        "test_MSE": float(dt_out.test_MSE),
+        # Add tree structure info for quick reference
+        "tree_info": {
+            "max_depth": int(dt_out.tree.get_depth()),
+            "n_leaves": int(dt_out.tree.get_n_leaves()),
+            "n_features": int(dt_out.tree.n_features_in_),
+        }
+    }
+    
+    metrics_path = output_dir / f"{filename_base}_metrics.json"
+    with open(metrics_path, 'w') as f:
+        json.dump(metrics, f, indent=2)
+    
+    return model_path, metrics_path
+
 if __name__ == "__main__":
-    layer = 1
-    neuron = 421
+    layer = 5
+    neuron = 1393
 
     model = load_model()
 
-    train_data, test_data = load_data(n_train=60000, n_test=1000)
+    train_data, test_data = load_data(n_train=60, n_test=1000)
 
     train_resid_acts, train_mlp_acts = extract_activations_for_layer(
         model, train_data, layer=layer
@@ -286,7 +372,7 @@ if __name__ == "__main__":
 
     dt_out = train_dt_for_neuron(X_train, y_train, X_test, y_test, layer, neuron)
 
+    model_path, metrics_path = save_dt_results(dt_out)
+    print(f"Saved decision tree to {model_path}")
+    print(f"Saved decision tree metrics to {metrics_path}")
     print(dt_out)
-
-
-# train_dt_for_layer, parallelize train_dt_for_neuron

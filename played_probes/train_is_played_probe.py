@@ -241,45 +241,45 @@ def train_all_probes(
     
     return results
 
+if __name__ == "__main__":
+    model, train_data, train_labels, test_data, test_labels = load_model_and_data(n_train = 10000, n_test = 10000)
 
-model, train_data, train_labels, test_data, test_labels = load_model_and_data(n_train = 10000, n_test = 10000)
+    train_activations = extract_activations_by_layer(model, train_data)
+    test_activations = extract_activations_by_layer(model, test_data)
 
-train_activations = extract_activations_by_layer(model, train_data)
-test_activations = extract_activations_by_layer(model, test_data)
+    results = train_all_probes(train_activations, test_activations, train_labels, test_labels)
 
-results = train_all_probes(train_activations, test_activations, train_labels, test_labels)
+    # Save
+    for layer in range(model.cfg.n_layers):
+        coef_dict = {probe.square: probe.probe.coef_.squeeze() for probe in results[layer]}
 
-# Save
-for layer in range(model.cfg.n_layers):
-    coef_dict = {probe.square: probe.probe.coef_.squeeze() for probe in results[layer]}
+        # insert -1000, so sigmoid viz will show blank
+        probe = np.stack([
+            coef_dict.get(i, np.zeros(model.cfg.d_model)) for i in range(64)
+        ], axis=-1)
 
-    # insert -1000, so sigmoid viz will show blank
-    probe = np.stack([
-        coef_dict.get(i, np.zeros(model.cfg.d_model)) for i in range(64)
-    ], axis=-1)
+        probe = einops.rearrange(probe, "d_model (row col) -> d_model row col", row=8)
 
-    probe = einops.rearrange(probe, "d_model (row col) -> d_model row col", row=8)
-
-    probe_tensor = t.from_numpy(probe).float()
-    t.save(probe_tensor, f"resid_{layer}_played.pth")
-    
-    print(f"Saved layer {layer} probe to played_probes/resid_{layer}_played.pth")
+        probe_tensor = t.from_numpy(probe).float()
+        t.save(probe_tensor, f"resid_{layer}_played.pth")
+        
+        print(f"Saved layer {layer} probe to played_probes/resid_{layer}_played.pth")
 
 
-# Calculate layer-wise F1 averages
-f1_summary = {}
-for layer in range(model.cfg.n_layers):
-    train_f1s = [probe.train_f1 for probe in results[layer]]
-    test_f1s = [probe.test_f1 for probe in results[layer]]
-    
-    f1_summary[f"layer_{layer}"] = {
-        "train_f1_mean": np.mean(train_f1s),
-        "train_f1_std": np.std(train_f1s),
-        "test_f1_mean": np.mean(test_f1s),
-        "test_f1_std": np.std(test_f1s),
-        "n_squares": len(results[layer])  # Should be 60
-    }
+    # Calculate layer-wise F1 averages
+    f1_summary = {}
+    for layer in range(model.cfg.n_layers):
+        train_f1s = [probe.train_f1 for probe in results[layer]]
+        test_f1s = [probe.test_f1 for probe in results[layer]]
+        
+        f1_summary[f"layer_{layer}"] = {
+            "train_f1_mean": np.mean(train_f1s),
+            "train_f1_std": np.std(train_f1s),
+            "test_f1_mean": np.mean(test_f1s),
+            "test_f1_std": np.std(test_f1s),
+            "n_squares": len(results[layer])  # Should be 60
+        }
 
-# Save to JSON
-with open("f1_summary.json", "w") as f:
-    json.dump(f1_summary, f, indent=2)
+    # Save to JSON
+    with open("f1_summary.json", "w") as f:
+        json.dump(f1_summary, f, indent=2)
