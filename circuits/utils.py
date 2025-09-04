@@ -56,7 +56,7 @@ class SubmoduleType(Enum):
 
 def get_model(model_name: str, device: torch.device) -> NNsight:
     if model_name == "Baidicoot/Othello-GPT-Transformer-Lens":
-        tf_model = HookedTransformer.from_pretrained("Baidicoot/Othello-GPT-Transformer-Lens")
+        tf_model = HookedTransformer.from_pretrained_no_processing("Baidicoot/Othello-GPT-Transformer-Lens", dtype=torch.float16)
         model = NNsight(tf_model).to(device)
         return model
     

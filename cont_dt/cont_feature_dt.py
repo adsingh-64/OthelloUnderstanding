@@ -10,6 +10,7 @@ import einops
 from nnsight.models import NNsightModel
 from sklearn.tree import DecisionTreeRegressor
 from sklearn.metrics import mean_squared_error
+from sklearn.multioutput import MultiOutputRegressor
 
 import circuits.utils as utils
 import circuits.othello_utils as othello_utils
@@ -27,6 +28,7 @@ from cosine_sims import (
 
 import json
 import pickle
+import gzip
 from typing import Tuple
 from jaxtyping import Int, Float, jaxtyped
 from typeguard import typechecked
@@ -34,6 +36,7 @@ from functools import partial
 from dataclasses import dataclass
 from joblib import Parallel, delayed
 from pathlib import Path
+from tqdm import tqdm
 
 
 jaxtyped = partial(jaxtyped, typechecker=typechecked)
@@ -240,59 +243,6 @@ def prepare_dt_train_data_for_layer(
     return X_train_scaled, y_train, X_test_scaled, y_test
 
 
-def train_dt_for_neuron(
-    X_train: Float[np.ndarray, "n_train_samples n_feats"],
-    y_train: Float[np.ndarray, "n_train_samples d_mlp"],
-    X_test: Float[np.ndarray, "n_test_samples n_feats"],
-    y_test: Float[np.ndarray, "n_test_samples d_mlp"],
-    layer: int,
-    neuron: int,
-) -> DecisionTreeResults:
-    """
-    Takes in activations and labels for a single layer,
-    trains a decision tree for a specified neuron in that layer,
-    evaluates it, and returns the results.
-    """
-    # 1. Initialize the DecisionTreeRegressor with hyperparameters
-    #    that prioritize interpretability and prevent overfitting.
-    tree = DecisionTreeRegressor(
-        max_depth=3,
-        random_state=42,
-        min_samples_leaf=50,
-        min_samples_split=100,
-        criterion="squared_error",
-    )
-
-    # 2. Select the activation data for the specific neuron we are analyzing.
-    y_train_neuron = y_train[:, neuron]
-    y_test_neuron = y_test[:, neuron]
-
-    # 3. Fit the decision tree to the training data.
-    tree.fit(X_train, y_train_neuron)
-
-    # 4. Evaluate the tree's performance on both training and test sets.
-    # The .score() method for a regressor returns the R^2 value.
-    train_r2 = tree.score(X_train, y_train_neuron)
-    test_r2 = tree.score(X_test, y_test_neuron)
-
-    train_mse = mean_squared_error(y_train_neuron, tree.predict(X_train))
-    test_mse = mean_squared_error(y_test_neuron, tree.predict(X_test))
-
-    # 5. Return the results in a structured dataclass.
-    # Note: The DecisionTreeResults dataclass has a 'square' field.
-    # As we are analyzing a neuron's general function here, not its effect
-    # on a specific square, we will use a placeholder value of -1.
-    return DecisionTreeResults(
-        layer=layer,
-        neuron=neuron,  # Placeholder, as this is a neuron-level analysis
-        tree=tree,
-        train_R2=train_r2,
-        train_MSE=train_mse,
-        test_R2=test_r2,
-        test_MSE=test_mse,
-    )
-
-
 def train_dt_for_layer(
     model: NNsightModel,
     X_train: Float[np.ndarray, "n_train_samples n_feats"],
@@ -300,59 +250,69 @@ def train_dt_for_layer(
     X_test: Float[np.ndarray, "n_test_samples n_feats"],
     y_test: Float[np.ndarray, "n_test_samples d_mlp"],
     layer: int,
+    depth: int = 3,
     n_jobs: int = -1,
-) -> DecisionTreeResults:
-    results = Parallel(n_jobs=n_jobs)(
-        delayed(train_dt_for_neuron)(
-            X_train, y_train, X_test, y_test, layer, neuron
+) -> list[DecisionTreeResults]:
+    # Convert to plain numpy arrays (joblib no like jaxtyping)
+    X_train = np.asarray(X_train)
+    y_train = np.asarray(y_train)
+    X_test = np.asarray(X_test)
+    y_test = np.asarray(y_test)
+    
+    def worker(neuron):
+        tree = DecisionTreeRegressor(
+            max_depth=depth,
+            random_state=42,
+            min_samples_leaf=50,
+            min_samples_split=100,
+            criterion="squared_error",
         )
-        for neuron in range(model.cfg.d_mlp)
+        
+        y_train_neuron = y_train[:, neuron]
+        y_test_neuron = y_test[:, neuron]
+        
+        tree.fit(X_train, y_train_neuron)
+        
+        train_r2 = tree.score(X_train, y_train_neuron)
+        test_r2 = tree.score(X_test, y_test_neuron)
+        train_mse = mean_squared_error(y_train_neuron, tree.predict(X_train))
+        test_mse = mean_squared_error(y_test_neuron, tree.predict(X_test))
+        
+        return DecisionTreeResults(
+            layer=layer,
+            neuron=neuron,
+            tree=tree,
+            train_R2=train_r2,
+            train_MSE=train_mse,
+            test_R2=test_r2,
+            test_MSE=test_mse,
+        )
+    
+    results = Parallel(n_jobs=n_jobs)(
+        delayed(worker)(neuron)
+        for neuron in tqdm(range(model.cfg.d_mlp), desc=f"Training layer {layer} trees")
     )
     return results
 
 
-def save_dt_results(dt_out: DecisionTreeResults, output_dir: str = "results"):
-    """Save decision tree results with both model and metrics."""
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Create descriptive filename
-    filename_base = f"layer{dt_out.layer}_neuron{dt_out.neuron}_depth{int(dt_out.tree.get_depth())}"
-    
-    # 1. Save the trained tree model (pickle)
-    model_path = output_dir / f"{filename_base}_model.pkl"
-    with open(model_path, 'wb') as f:
-        pickle.dump(dt_out.tree, f)
-    
-    # 2. Save metrics as JSON (human-readable)
-    metrics = {
-        "layer": dt_out.layer,
-        "neuron": dt_out.neuron,
-        "train_R2": float(dt_out.train_R2),
-        "train_MSE": float(dt_out.train_MSE),
-        "test_R2": float(dt_out.test_R2),
-        "test_MSE": float(dt_out.test_MSE),
-        # Add tree structure info for quick reference
-        "tree_info": {
-            "max_depth": int(dt_out.tree.get_depth()),
-            "n_leaves": int(dt_out.tree.get_n_leaves()),
-            "n_features": int(dt_out.tree.n_features_in_),
-        }
-    }
-    
-    metrics_path = output_dir / f"{filename_base}_metrics.json"
-    with open(metrics_path, 'w') as f:
-        json.dump(metrics, f, indent=2)
-    
-    return model_path, metrics_path
+def save_layer_results(results, layer, save_dir):
+    """Save all trees in one compressed pickle"""
+    save_dir = Path(save_dir)
+    save_dir.mkdir(parents=True, exist_ok=True)
+
+    save_path = save_dir / f"layer_{layer}_trees.pkl.gz"
+    with gzip.open(save_path, 'wb') as f:
+        pickle.dump(results, f)
+    return save_path
+
 
 if __name__ == "__main__":
     layer = 5
-    neuron = 1393
+    depth = 4
 
     model = load_model()
 
-    train_data, test_data = load_data(n_train=60, n_test=1000)
+    train_data, test_data = load_data(n_train=6000, n_test=500)
 
     train_resid_acts, train_mlp_acts = extract_activations_for_layer(
         model, train_data, layer=layer
@@ -367,12 +327,18 @@ if __name__ == "__main__":
         train_mlp_acts,
         test_resid_acts,
         test_mlp_acts,
-        layer,
+        layer
     )
 
-    dt_out = train_dt_for_neuron(X_train, y_train, X_test, y_test, layer, neuron)
+    results = train_dt_for_layer(
+        model,
+        X_train,
+        y_train,
+        X_test,
+        y_test,
+        layer=layer,
+        depth=depth
+    )
 
-    model_path, metrics_path = save_dt_results(dt_out)
-    print(f"Saved decision tree to {model_path}")
-    print(f"Saved decision tree metrics to {metrics_path}")
-    print(dt_out)
+    save_path = save_layer_results(results, layer, save_dir="results")
+    print(f"Saved results to {save_path}")
