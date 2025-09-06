@@ -4,10 +4,16 @@ Visualize decision tree trained on Othello neuron activations
 
 import pickle
 import json
+import gzip
 import numpy as np
 import matplotlib.pyplot as plt
+from typing import Literal
+from matplotlib.figure import Figure
 from sklearn.tree import plot_tree
+from sklearn.tree import DecisionTreeRegressor
 from pathlib import Path
+from dataclasses import dataclass
+from cont_feature_dt import DecisionTreeResults
 
 
 def get_feature_names():
@@ -57,49 +63,45 @@ def get_feature_names():
     return feature_names
 
 
-def load_decision_tree(layer, neuron, depth, results_dir="results"):
-    """Load saved decision tree model and metrics."""
+def load_decision_tree_for_layer(
+    layer : int, 
+    results_dir: str ="results",
+) -> list[DecisionTreeResults]:
+    """Load decision trees for layer"""
     results_dir = Path(results_dir)
-    filename_base = f"layer{layer}_neuron{neuron}_depth{depth}"
+    file_name = f"layer_{layer}_trees.pkl.gz"
+    model_path = results_dir / file_name
+
+    with gzip.open(model_path, 'rb') as f:
+        trees = pickle.load(f)
     
-    # Load model
-    model_path = results_dir / f"{filename_base}_model.pkl"
-    with open(model_path, 'rb') as f:
-        tree = pickle.load(f)
-    
-    # Load metrics
-    metrics_path = results_dir / f"{filename_base}_metrics.json"
-    with open(metrics_path, 'r') as f:
-        metrics = json.load(f)
-    
-    return tree, metrics
+    return trees
 
 
-def visualize_decision_tree(tree, metrics, feature_names, save_path=None, figsize=(20, 10)):
+def visualize_decision_tree(
+    tree: DecisionTreeResults, 
+    feature_names: list[str], 
+    save_path: str | None = None, 
+    figsize: tuple[float, float] = (20, 10),
+ ) -> Figure:
     """
     Create a visualization of the decision tree with proper feature labels.
-    
-    Args:
-        tree: Trained DecisionTreeRegressor
-        metrics: Dictionary of tree metrics
-        feature_names: List of feature names
-        save_path: Optional path to save the figure
-        figsize: Figure size tuple
     """
     fig, ax = plt.subplots(1, 1, figsize=figsize)
     
     # Create title with metrics
-    title = (f"Decision Tree: Layer {metrics['layer']}, Neuron {metrics['neuron']}\n"
-             f"Test R² = {metrics['test_R2']:.3f}, Train R² = {metrics['train_R2']:.3f}\n"
-             f"Depth = {metrics['tree_info']['max_depth']}, "
-             f"Leaves = {metrics['tree_info']['n_leaves']}")
+    title = (f"Decision Tree: Layer {tree.layer}, Neuron {tree.neuron}\n"
+             f"Test R² = {tree.test_R2:.3f}\n"
+             f"Depth = {tree.tree.max_depth}, "
+             f"Leaves = {tree.tree.tree_.n_leaves}")
     
     # Plot the tree
-    plot_tree(tree, 
+    model = tree.tree
+    plot_tree(model, 
               feature_names=feature_names,
               filled=True,
               rounded=True,
-              fontsize=16,
+              fontsize=10,
               ax=ax,
               impurity=False,  # Don't show impurity (MSE) values
               precision=2)  # Round values to 2 decimal places
@@ -117,90 +119,63 @@ def visualize_decision_tree(tree, metrics, feature_names, save_path=None, figsiz
     return fig
 
 
-def print_tree_rules(tree, feature_names, metrics):
-    """Print human-readable rules from the decision tree."""
+@dataclass(frozen=True) 
+class Condition:
+    feature_name: str
+    operator: Literal['<=', '>']
+    threshold: float
+
+
+def traverse_tree(tree: DecisionTreeRegressor) -> list[tuple[list[Condition], float]]:
+    children_left = tree.children_left
+    children_right = tree.children_right
+    values = tree.values
+    thresholds = tree.thresholsd
+    features = tree.features
+
+    feature_names = get_feature_names()
+
+    all_leaf_info = []
+    node_id = 0
+    if tree.children_left[id] == tree.children_right[id]:
+        all_leaf_info.append(node_id)
+        return all_leaf_info
+    else:
+        all_leaf_info.append(
+            Condition(
+                feature_name=feature_names[features[node_id]],
+                operator='<=',
+                threshold=thresholds[node_id]
+            )
+        )
+        all_leaf_info.append(
+            Condition(
+                feature_name=feature_names[features[node_id]],
+                operator='>',
+                threshold=thresholds[node_id]
+            )
+        )
+        all_leaf_info += # call fucntion on node_id = children_left[node_id] and node_id = children_right[node_id]
     
-    print(f"\n{'='*60}")
-    print(f"Decision Tree Rules for Layer {metrics['layer']}, Neuron {metrics['neuron']}")
-    print(f"{'='*60}\n")
-    
-    def get_rules(tree, feature_names):
-        """Extract rules from tree structure."""
-        tree_ = tree.tree_
-        feature_name = [
-            feature_names[i] if i != -2 else "undefined!"
-            for i in tree_.feature
-        ]
-        
-        def recurse(node, depth, parent_rule="Root"):
-            indent = "  " * depth
-            
-            if tree_.feature[node] != -2:  # Not a leaf
-                name = feature_name[node]
-                threshold = tree_.threshold[node]
-                value = tree_.value[node][0][0]
-                n_samples = tree_.n_node_samples[node]
-                
-                print(f"{indent}if {name} <= {threshold:.3f}:")
-                print(f"{indent}  (samples: {n_samples}, value: {value:.3f})")
-                recurse(tree_.children_left[node], depth + 1, f"{name} <= {threshold:.3f}")
-                
-                print(f"{indent}else:  # {name} > {threshold:.3f}")
-                print(f"{indent}  (samples: {n_samples}, value: {value:.3f})")
-                recurse(tree_.children_right[node], depth + 1, f"{name} > {threshold:.3f}")
-            else:  # Leaf node
-                value = tree_.value[node][0][0]
-                n_samples = tree_.n_node_samples[node]
-                print(f"{indent}-> Prediction: {value:.3f} (samples: {n_samples})")
-        
-        recurse(0, 0)
-    
-    get_rules(tree, feature_names)
-    
-    # Print feature importance
-    print(f"\n{'='*60}")
-    print("Feature Importance (top 10):")
-    print(f"{'='*60}\n")
-    
-    importances = tree.feature_importances_
-    indices = np.argsort(importances)[::-1][:10]
-    
-    for i, idx in enumerate(indices):
-        if importances[idx] > 0:
-            print(f"{i+1:2d}. {feature_names[idx]:30s}: {importances[idx]:.4f}")
+
+def convert_to_binary_dt(
+    tree: DecisionTreeResults,
+):
+    regressor = tree.tree
+
 
 
 if __name__ == "__main__":
     # Configuration
     layer = 5
-    neuron = 1393
-    depth = 3
-    results_dir = 'results'
-    save_fig = True  # Set to True to save the figure
-    print_rules = True  # Set to True to print text rules
-    figsize = (20, 10)
+    neuron = 766
     
     # Load the decision tree
-    tree, metrics = load_decision_tree(layer, neuron, depth, results_dir)
+    layer_5 = load_decision_tree_for_layer(layer=layer)
     
     # Get feature names
     feature_names = get_feature_names()
     
     # Verify we have the right number of features
-    expected_features = 64 + 60 + 64 + 60  # 248 total
-    assert len(feature_names) == expected_features, \
-        f"Expected {expected_features} features, got {len(feature_names)}"
-    
-    print(f"\nLoaded decision tree for Layer {layer}, Neuron {neuron}")
-    print(f"Tree depth: {metrics['tree_info']['max_depth']}")
-    print(f"Number of leaves: {metrics['tree_info']['n_leaves']}")
-    print(f"Test R²: {metrics['test_R2']:.4f}")
-    print(f"Train R²: {metrics['train_R2']:.4f}")
-    
-    # Visualize the tree
-    save_path = f"tree_layer{layer}_neuron{neuron}.png" if save_fig else None
-    visualize_decision_tree(tree, metrics, feature_names, save_path, figsize)
-    
-    # Optionally print rules
-    if print_rules:
-        print_tree_rules(tree, feature_names, metrics)
+    L5N766 = layer_5[neuron]
+    visualize_decision_tree(L5N766, feature_names)
