@@ -292,8 +292,8 @@ if __name__ == "__main__":
     flipped_normed = get_flipped_normed(flipped_probes)
     played_normed = get_played_normed(played_probes)
 
-    layer = 5
-    neuron = 1393
+    layer = 6
+    neuron = 926
 
     mine_theirs_in, blank_in, flipped_in, played_in = calculate_neuron_inputs(
         model, 
@@ -315,6 +315,12 @@ if __name__ == "__main__":
         neuron
     )
 
+    unembedding = calculate_neuron_unembedding(
+        model,
+        layer,
+        neuron
+    )
+
     neel_utils.plot_board_values(
         t.stack([mine_theirs_in, blank_in, flipped_in, played_in]),
         title=f"L{layer}N{neuron} reading",
@@ -331,4 +337,13 @@ if __name__ == "__main__":
         boards_per_row=2,
         width=600,
         height=800,
+    )
+
+    neel_utils.plot_board_values(
+        unembedding.unsqueeze(dim = 0),
+        title = f"L{layer}N{neuron} logit lens",
+        board_titles=[""],
+        boards_per_row=1,
+        width=400,
+        height=400,
     )
