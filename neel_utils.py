@@ -431,8 +431,8 @@ def plot_board_values(
 def get_board_states_and_legal_moves(
     games_square: Int[Tensor, "n_moves"],
 ) -> tuple[
-    Int[Tensor, "n_games n_moves rows cols"],
-    Int[Tensor, "n_games n_moves rows cols"],
+    Int[Tensor, "n_moves rows cols"],
+    Int[Tensor, "n_moves rows cols"],
     list,
 ]:
     """

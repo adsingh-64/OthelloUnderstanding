@@ -5,7 +5,9 @@ Visualize decision tree trained on Othello neuron activations
 import pickle
 import json
 import gzip
+from functools import lru_cache
 from pprint import pprint
+from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
 from typing import Literal, TypeAlias
@@ -16,7 +18,12 @@ from skimage.filters import threshold_otsu
 from pathlib import Path
 from dataclasses import dataclass
 from collections import defaultdict
-from cont_feature_dt import DecisionTreeResults
+from cont_dt.cont_feature_dt import DecisionTreeResults
+
+
+FILE_PATH = Path(__file__).resolve()
+PARENT_DIR = FILE_PATH.parent
+RESULTS_DIR = PARENT_DIR / "results"
 
 
 N_LAYERS = 8
@@ -72,12 +79,10 @@ def get_feature_names():
 
 def load_decision_tree_for_layer(
     layer : int, 
-    results_dir: str ="results",
 ) -> list[DecisionTreeResults]:
     """Load decision trees for layer"""
-    results_dir = Path(results_dir)
     file_name = f"layer_{layer}_trees.pkl.gz"
-    model_path = results_dir / file_name
+    model_path = RESULTS_DIR / file_name
 
     with gzip.open(model_path, 'rb') as f:
         trees = pickle.load(f)
@@ -258,9 +263,30 @@ def check_layer(trees: list[DecisionTreeResults], query: DecisionPath) -> list[i
     return [neuron_id for neuron_id, neuron_tree in enumerate(trees) if check_neuron(neuron_tree, query)]
 
 
+@lru_cache(maxsize=1)
+def load_all_trees(
+    n_layers: int = 8,
+) -> dict[int, list[DecisionTreeResults]]:
+    """Loads and caches all decision trees from disk."""
+    print("Loading all decision trees from disk... (this will happen only once)")
+    return {
+        layer: load_decision_tree_for_layer(layer=layer)
+        for layer in range(1, n_layers)
+    }
+
+
 def check_model(trees: dict[int, list[DecisionTreeResults]], query: DecisionPath) -> dict[int: list[int]]:
     """Returns all neurons satisfying query"""
     return {layer: check_layer(layer_trees, query) for layer, layer_trees in trees.items()}
+
+
+def find_neurons_for_query(query: DecisionPath) -> dict[int, list[int]]:
+    """
+    Finds neurons that satisfy the query using a cached tree loader.
+    """
+    all_trees = load_all_trees() 
+    return check_model(all_trees, query)
+
 
 if __name__ == "__main__":
     all_trees = {
