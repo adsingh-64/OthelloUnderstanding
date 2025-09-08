@@ -189,6 +189,9 @@ if __name__ == "__main__":
     control_positions_encoded, control_positions_decoded = get_filtered_positions(data, intervention_query, control_query, intervention=False)
     # sanity_check(intervention_positions_decoded, control_positions_decoded)
 
-    intervened_metrics = intervene(intervention_positions_encoded, intervention_query[:1])
+    intervened_metrics = intervene(intervention_positions_encoded, intervention_query[:2])
+    control_metrics = intervene(control_positions_encoded, intervention_query[:2])
+
     print(intervened_metrics)
+    print(control_metrics)
 
