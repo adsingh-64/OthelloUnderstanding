@@ -289,17 +289,14 @@ def find_neurons_for_query(query: DecisionPath) -> dict[int, list[int]]:
 
 
 if __name__ == "__main__":
-    all_trees = {
-        layer: load_decision_tree_for_layer(layer=layer)
-        for layer in range(1, N_LAYERS)
-    }
+    all_trees = load_all_trees()
 
     # feature_names = get_feature_names()
     # viz = visualize_decision_tree(all_trees[6][1422], feature_names)
     
     query = [
-        Condition(feature_name='C2 blank', operator='>', threshold=0),
-        Condition(feature_name='D3 mine-theirs', operator='<=', threshold=0),
-        Condition(feature_name='E4 mine-theirs', operator='>', threshold=0),
+        Condition(feature_name='C0 blank', operator='>', threshold=-1),
+        Condition(feature_name='D1 mine-theirs', operator='<=', threshold=1),
+        #Condition(feature_name='E2 mine-theirs', operator='>', threshold=-1),
     ] 
     pprint(check_model(all_trees, query))

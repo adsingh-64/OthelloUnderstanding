@@ -21,4 +21,5 @@ typeguard==2.13.3
 numpy<2
 scikit-image==0.25.2
 nbformat==5.10.4
+tabulate==0.9.0
 chess

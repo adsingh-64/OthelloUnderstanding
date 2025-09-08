@@ -292,8 +292,8 @@ if __name__ == "__main__":
     flipped_normed = get_flipped_normed(flipped_probes)
     played_normed = get_played_normed(played_probes)
 
-    layer = 6
-    neuron = 926
+    layer = 1
+    neuron = 98
 
     mine_theirs_in, blank_in, flipped_in, played_in = calculate_neuron_inputs(
         model, 
