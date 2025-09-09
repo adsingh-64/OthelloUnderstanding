@@ -292,8 +292,8 @@ if __name__ == "__main__":
     flipped_normed = get_flipped_normed(flipped_probes)
     played_normed = get_played_normed(played_probes)
 
-    layer = 1
-    neuron = 98
+    layer = 3
+    neuron = 227
 
     mine_theirs_in, blank_in, flipped_in, played_in = calculate_neuron_inputs(
         model, 
@@ -330,14 +330,14 @@ if __name__ == "__main__":
         height=800,
     )
 
-    neel_utils.plot_board_values(
-        t.stack([mine_theirs_out, blank_out, flipped_out, played_out]),
-        title=f"L{layer}N{neuron} writing",
-        board_titles=["Mine/Theirs Out", "Blank Out", "Flipped Out", "Played Out"],
-        boards_per_row=2,
-        width=600,
-        height=800,
-    )
+    # neel_utils.plot_board_values(
+    #     t.stack([mine_theirs_out, blank_out, flipped_out, played_out]),
+    #     title=f"L{layer}N{neuron} writing",
+    #     board_titles=["Mine/Theirs Out", "Blank Out", "Flipped Out", "Played Out"],
+    #     boards_per_row=2,
+    #     width=600,
+    #     height=800,
+    # )
 
     neel_utils.plot_board_values(
         unembedding.unsqueeze(dim = 0),

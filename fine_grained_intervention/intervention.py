@@ -19,6 +19,7 @@ from typing import Tuple
 from tqdm import tqdm
 from rich import print as rprint
 from rich.table import Table
+from pprint import pprint
 
 
 def load_model(
@@ -132,8 +133,75 @@ def sanity_check(
         )
 
 
-def intervene(positions: list[Int[Tensor, "n_moves"]], query: list[Condition], batch_size: int = 1024) -> dict[str, float]:
-    neurons = find_neurons_for_query(query)
+def find_neurons_for_query_DLA(
+    model: NNsightModel,
+    positions: list[Int[Tensor, "n_moves"]], 
+    query: list[Condition], 
+    batch_size: int = 1024,
+    k: int = 25,
+) -> dict[int, list[int]]:
+    legal_square_id = neel_utils.to_id(query[0].feature_name.split()[0])
+    W_out = model.W_out[1:, :].detach().clone()
+    unembed = model.W_U[:, legal_square_id].detach().clone()
+    weights = einops.einsum(W_out, unembed, "n_layers d_mlp d_model, d_model -> n_layers d_mlp")
+
+    neuron_acts = {layer: t.zeros((model.cfg.d_mlp), device=device) for layer in range(1, model.cfg.n_layers)}
+
+    for i in tqdm(range(0, len(positions), batch_size), desc="Batches"):
+        batch = positions[i:i + batch_size]
+        seq_lengths = [pos.shape[0] for pos in batch]
+        max_len = max(seq_lengths)
+        
+        padded_batch = []
+        for pos, length in zip(batch, seq_lengths):
+            if length < max_len:
+                padding = t.zeros(max_len - length, dtype=pos.dtype, device=pos.device)
+                padded = t.cat([pos, padding])
+            else:
+                padded = pos
+            padded_batch.append(padded)
+        
+        batch_tensor = t.stack(padded_batch).to(device) 
+        batch_indices = t.arange(len(batch), device=device)
+        last_token_indices = t.tensor([length - 1 for length in seq_lengths], device=device)
+
+        batch_acts = {}
+        with model.trace(batch_tensor):
+            for layer in range(1, model.cfg.n_layers):
+                layer_acts = model.blocks[layer].mlp.hook_post.output[batch_indices, last_token_indices].sum(dim = 0).save()
+                batch_acts[layer] = layer_acts
+                
+        for layer in range(1, model.cfg.n_layers):
+            neuron_acts[layer] += batch_acts[layer]
+
+    neuron_acts = t.stack(list(neuron_acts.values()))
+    neuron_attrs = neuron_acts * weights
+    neuron_attrs_flattened = einops.rearrange(neuron_attrs, "n_layers d_mlp -> (n_layers d_mlp)")
+
+    flattened_indices = neuron_attrs_flattened.topk(k=k).indices
+    results = {layer: [] for layer in range(1, model.cfg.n_layers)}
+    for idx in flattened_indices:
+        idx = idx.item()
+        layer = idx // model.cfg.d_mlp + 1
+        neuron = idx % model.cfg.d_mlp
+        results[layer].append(neuron)
+
+    return results
+
+
+def intervene(
+    model: NNsightModel, 
+    positions: list[Int[Tensor, "n_moves"]], 
+    query: list[Condition], 
+    dla_positions: list[Int[Tensor, "n_moves"]] | None = None,
+    dla: bool = False,
+    k: int | None = None,
+    batch_size: int = 1024
+) -> dict[str, float]:
+    if dla:
+        neurons = find_neurons_for_query_DLA(model, dla_positions, query, k=k)
+    else:
+        neurons = find_neurons_for_query(query)
     print(f"Ablating {sum(len(neurons) for neurons in neurons.values())} neurons")
     legal_square_id = neel_utils.to_id(query[0].feature_name.split()[0])
 
@@ -264,8 +332,22 @@ if __name__ == "__main__":
     control_positions_encoded, control_positions_decoded = get_filtered_positions(data, intervention_query, control_query, intervention=False)
     #sanity_check(intervention_positions_decoded, control_positions_decoded)
 
-    intervened_metrics = intervene(intervention_positions_encoded, intervention_query[:3])
-    control_metrics = intervene(control_positions_encoded, intervention_query[:3])
+    intervened_metrics = intervene(
+        model=model,
+        positions=intervention_positions_encoded,
+        query=intervention_query,
+        dla_positions=intervention_positions_encoded,
+        dla=True,
+        k=25,
+    )
+    control_metrics = intervene(
+        model=model,
+        positions=control_positions_encoded,
+        query=intervention_query,
+        dla_positions=intervention_positions_encoded,
+        dla=True,
+        k=25,
+    )
 
     # Create a rich table
     rprint(f"\n[bold]Number of intervention positions:[/bold] {len(intervention_positions_encoded)}")
@@ -303,3 +385,12 @@ if __name__ == "__main__":
         f"{control_metrics['accuracy_diff']:.2%}"
     )
     rprint(table)
+
+    dt_neurons = find_neurons_for_query(intervention_query[:2])
+    dla_neurons = find_neurons_for_query_DLA(model, intervention_positions_encoded, intervention_query, k=25)
+    dla_unique_neurons = {layer: set(dla_neurons[layer]) - set(dt_neurons[layer]) for layer in dt_neurons.keys()}
+    pprint(dt_neurons)
+    print("="*80)
+    pprint(dla_neurons)
+    print("="*80)
+    pprint(dla_unique_neurons)
