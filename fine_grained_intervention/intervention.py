@@ -189,10 +189,24 @@ def find_neurons_for_query_DLA(
     return results
 
 
+def merge_dicts(dicts: list[dict]):
+    """Merge any number of dicts with identical keys, combining list values and removing duplicates."""
+    merged = {}
+    
+    for key in dicts[0].keys():
+        combined = []
+        for d in dicts:
+            combined.extend(d.get(key, []))
+        merged[key] = list(set(combined))
+    
+    return merged
+
+
 def intervene(
     model: NNsightModel, 
     positions: list[Int[Tensor, "n_moves"]], 
-    query: list[Condition], 
+    query: list[Condition],
+    dt_queries: list[list[Condition]] | None = None, 
     dla_positions: list[Int[Tensor, "n_moves"]] | None = None,
     dla: bool = False,
     k: int | None = None,
@@ -201,7 +215,7 @@ def intervene(
     if dla:
         neurons = find_neurons_for_query_DLA(model, dla_positions, query, k=k)
     else:
-        neurons = find_neurons_for_query(query)
+        neurons = merge_dicts([find_neurons_for_query(query) for query in dt_queries])
     print(f"Ablating {sum(len(neurons) for neurons in neurons.values())} neurons")
     legal_square_id = neel_utils.to_id(query[0].feature_name.split()[0])
 
@@ -209,6 +223,7 @@ def intervene(
     total_prob_diff = 0
     total_clean_accuracy = 0
     total_corrupted_accuracy = 0
+    total_below_1_percent = 0
 
     for i in tqdm(range(0, len(positions), batch_size), desc="Batches"):
         batch = positions[i:i + batch_size]
@@ -289,6 +304,10 @@ def intervene(
             corrupted_top_k = t.topk(corrupted_logits[j], k=k).indices
             if legal_square_id in corrupted_top_k.tolist():
                 total_corrupted_accuracy += 1
+
+            # Check if dropped below 1 percent of original accuracy
+            if corrupted_probs_square[j] < 0.01 * 1/k:
+                total_below_1_percent += 1
         
         total_logit_diff += (clean_logits_square - corrupted_logits_square).sum().item()
         total_prob_diff += (clean_probs_square - corrupted_probs_square).sum().item()
@@ -297,13 +316,15 @@ def intervene(
     avg_prob_diff = total_prob_diff / len(positions)
     avg_clean_accuracy = total_clean_accuracy / len(positions)
     avg_corrupted_accuracy = total_corrupted_accuracy / len(positions)
+    avg_num_below_1_percent = total_below_1_percent / len(positions)
     
     return {
         "logit_diff": avg_logit_diff, 
         "prob_diff": avg_prob_diff,
         "clean_accuracy": avg_clean_accuracy,
         "corrupted_accuracy": avg_corrupted_accuracy,
-        "accuracy_diff": avg_clean_accuracy - avg_corrupted_accuracy
+        "accuracy_diff": avg_clean_accuracy - avg_corrupted_accuracy,
+        "below_1_percent": avg_num_below_1_percent,
     }
         
 
@@ -320,7 +341,11 @@ if __name__ == "__main__":
         Condition(feature_name='C0 blank', operator='>', threshold=-1),
         Condition(feature_name='D1 mine-theirs', operator='<=', threshold=1),
         Condition(feature_name='E2 mine-theirs', operator='>', threshold=-1),
-    ] 
+    ]
+
+    dt_queries = [
+        [Condition(feature_name='C0 blank', operator='>', threshold=-1), Condition(feature_name='D1 mine-theirs', operator='<=', threshold=1)],
+    ]
 
     control_query = [
         Condition(feature_name='C0 blank', operator='>', threshold=-1),
@@ -335,18 +360,20 @@ if __name__ == "__main__":
     intervened_metrics = intervene(
         model=model,
         positions=intervention_positions_encoded,
+        dt_queries=dt_queries,
         query=intervention_query,
-        dla_positions=intervention_positions_encoded,
-        dla=True,
-        k=25,
+        # dla_positions=intervention_positions_encoded,
+        # dla=True,
+        # k=k,
     )
     control_metrics = intervene(
         model=model,
         positions=control_positions_encoded,
+        dt_queries=dt_queries,
         query=intervention_query,
-        dla_positions=intervention_positions_encoded,
-        dla=True,
-        k=25,
+        # dla_positions=intervention_positions_encoded,
+        # dla=True,
+        # k=k,
     )
 
     # Create a rich table
@@ -384,13 +411,18 @@ if __name__ == "__main__":
         f"{intervened_metrics['accuracy_diff']:.2%}",
         f"{control_metrics['accuracy_diff']:.2%}"
     )
+    table.add_row(
+        "Below 1 Percent",
+        f"{intervened_metrics['below_1_percent']:.2%}",
+        f"{control_metrics['below_1_percent']:.2%}"
+    )
     rprint(table)
 
-    dt_neurons = find_neurons_for_query(intervention_query[:2])
-    dla_neurons = find_neurons_for_query_DLA(model, intervention_positions_encoded, intervention_query, k=25)
-    dla_unique_neurons = {layer: set(dla_neurons[layer]) - set(dt_neurons[layer]) for layer in dt_neurons.keys()}
-    pprint(dt_neurons)
-    print("="*80)
-    pprint(dla_neurons)
-    print("="*80)
-    pprint(dla_unique_neurons)
+    # dt_neurons = find_neurons_for_query(intervention_query[:2])
+    # dla_neurons = find_neurons_for_query_DLA(model, intervention_positions_encoded, intervention_query, k=25)
+    # dla_unique_neurons = {layer: set(dla_neurons[layer]) - set(dt_neurons[layer]) for layer in dt_neurons.keys()}
+    # pprint(dt_neurons)
+    # print("="*80)
+    # pprint(dla_neurons)
+    # print("="*80)
+    # pprint(dla_unique_neurons)
