@@ -34,7 +34,11 @@ from fine_grained_intervention.utils import (
 
 @dataclass(frozen=True)
 class RestoreInterventionMetrics:
+    logit_before: float
+    logit_after: float
     logit_diff: float
+    prob_before: float
+    prob_after: float
     prob_diff: float
 
 
@@ -74,13 +78,34 @@ def sanity_check(
 
 
 def cache_mean_acts(
+    model: NNsightModel,
     positions_encoded: list[Int[Tensor, "n_moves"]],
-    neurons: list[int, list[int]],
+    neurons: dict[int, list[int]],
     batch_size: int = 1024,
     device: str = "cuda",
-) -> list[int, list[float]]:
-    batch_tensor, batch_indices, legal_moves = right_pad(positions_encoded, device=device)
-    pass
+) -> dict[int, Tensor]:
+    neuron_acts = {layer: t.zeros(model.cfg.d_mlp, device=device) for layer in neurons.keys()}
+
+    for i in tqdm(range(0, len(positions_encoded), batch_size), desc="Caching Activations"):
+        batch = positions_encoded[i:i + batch_size]
+        batch_tensor, batch_indices, last_token_indices = right_pad(batch, device=device)
+
+        batch_acts = {}
+        with model.trace(batch_tensor):
+            for layer, neuron_indices in neurons.items():
+                if neuron_indices:
+                    activations = model.blocks[layer].mlp.hook_post.output[batch_indices, last_token_indices]
+                    batch_acts[layer] = activations.sum(dim=0).save()
+
+        for layer in batch_acts:
+            neuron_acts[layer] += batch_acts[layer]
+
+
+    # Compute the mean
+    for layer in neuron_acts:
+        neuron_acts[layer] /= len(positions_encoded)
+
+    return neuron_acts
 
 
 def mean_ablation(
@@ -90,8 +115,55 @@ def mean_ablation(
     last_token_indices: Int[Tensor, "batch"],
     legal_square_id: int,
     neurons: dict[int, list[int]],
+    mean_neuron_acts: dict[int, Tensor],
 ) -> Tuple[Float[Tensor, "batch d_vocab"], Float[Tensor, "batch"], Float[Tensor, "batch"]]:
-    pass
+    with model.trace(batch_tensor):
+        for layer, neuron_indices_list in neurons.items():
+            if neuron_indices_list:
+                neuron_indices = t.tensor(neuron_indices_list, device=device)
+                n_neurons = len(neuron_indices_list)
+
+                # Get the mean activations for the neurons in this layer
+                mean_acts_for_layer = mean_neuron_acts[layer][neuron_indices]
+
+                # Repeat indices for batch and sequence dimensions
+                batch_indices_repeated = einops.repeat(
+                    batch_indices,
+                    'batch -> batch neurons',
+                    neurons=n_neurons,
+                )
+                last_token_indices_repeated = einops.repeat(
+                    last_token_indices,
+                    'batch -> batch neurons',
+                    neurons=n_neurons,
+                )
+                neuron_indices_repeated = einops.repeat(
+                    neuron_indices,
+                    'neurons -> batch neurons',
+                    batch=len(batch_tensor),
+                )
+                
+                # Repeat the mean activations for each item in the batch
+                repeated_mean_acts = einops.repeat(
+                    mean_acts_for_layer,
+                    'neurons -> batch neurons',
+                    batch=len(batch_tensor)
+                )
+
+                # Set the neuron activations to the mean values
+                model.blocks[layer].mlp.hook_post.output[
+                    batch_indices_repeated, 
+                    last_token_indices_repeated, 
+                    neuron_indices_repeated
+                ] = repeated_mean_acts
+        
+        logits = model.unembed.output[batch_indices, last_token_indices].save()
+        probs = t.nn.functional.softmax(logits, dim=-1)
+        
+        logits_square = logits[:, legal_square_id].save()
+        probs_square = probs[:, legal_square_id].save()
+
+    return logits, logits_square, probs_square
 
 
 def intervene(
@@ -106,9 +178,10 @@ def intervene(
     legal_square_id = neel_utils.to_id(query[0].feature_name.split()[0])
 
     neurons = merge_dicts([find_neurons_for_query(query) for query in dt_queries])
-    print(f"Ablating {sum(len(neurons) for neurons in neurons.values())} neurons")
+    print(f"Ablating {sum(len(v) for v in neurons.values())} neurons")
 
-    neuron_acts = cache_mean_acts(
+    mean_neuron_acts = cache_mean_acts(
+        model,
         base_positions,
         neurons,
         batch_size=batch_size,
@@ -116,7 +189,11 @@ def intervene(
     )
 
     total_logit_diff = 0
+    total_logit_before = 0
+    total_logit_after = 0
     total_prob_diff = 0
+    total_prob_before = 0
+    total_prob_after = 0
     
     for i in tqdm(range(0, len(intervention_positions), batch_size), desc="Batches"):
         batch = intervention_positions[i:i + batch_size]
@@ -138,17 +215,30 @@ def intervene(
             last_token_indices,
             legal_square_id,
             neurons,
-            neuron_acts,
+            mean_neuron_acts,
         )
 
         total_logit_diff += (restored_logits_square - clean_logits_square).sum().item()
+        total_logit_before += clean_logits_square.sum().item()
+        total_logit_after += restored_logits_square.sum().item()
         total_prob_diff += (restored_probs_square - clean_probs_square).sum().item()
+        total_prob_before += clean_probs_square.sum().item()
+        total_prob_after += restored_probs_square.sum().item()
 
+        
+    avg_logit_before = total_logit_before / len(intervention_positions)
+    avg_logit_after = total_logit_after / len(intervention_positions)
     avg_logit_diff = total_logit_diff / len(intervention_positions)
+    avg_prob_before = total_prob_before / len(intervention_positions)
+    avg_prob_after = total_prob_after / len(intervention_positions)
     avg_prob_diff = total_prob_diff / len(intervention_positions)
 
     return RestoreInterventionMetrics(
+        logit_before=avg_logit_before,
+        logit_after=avg_logit_after,
         logit_diff=avg_logit_diff,
+        prob_before=avg_prob_before,
+        prob_after=avg_prob_after,
         prob_diff=avg_prob_diff,
     )
 
@@ -159,8 +249,24 @@ def print_table(restore_metrics: RestoreInterventionMetrics) -> None:
     table.add_column("Metric", style="", no_wrap=True)
     table.add_column("Result", justify="right", style="")
     table.add_row(
+        "Logit Before",
+        f"{restore_metrics.logit_before:.4f}",
+    )
+    table.add_row(
+        "Logit After",
+        f"{restore_metrics.logit_after:.4f}",
+    )
+    table.add_row(
         "Logit Diff",
         f"{restore_metrics.logit_diff:.4f}",
+    )
+    table.add_row(
+        "Prob Before",
+        f"{restore_metrics.prob_before:.4f}",
+    )
+    table.add_row(
+        "Prob After",
+        f"{restore_metrics.prob_after:.4f}",
     )
     table.add_row(
         "Prob Diff",
