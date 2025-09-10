@@ -20,6 +20,19 @@ from tqdm import tqdm
 from rich import print as rprint
 from rich.table import Table
 from pprint import pprint
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class InterventionMetrics:
+    logit_diff: float
+    prob_diff: float
+    clean_accuracy: float
+    corrupted_accuracy: float
+    accuracy_diff: float
+    below_1_percent: float
+    below_5_percent: float
+    below_10_percent: float
 
 
 def load_model(
@@ -78,6 +91,7 @@ def get_feature_indices(query: list[Condition]) -> list[Tuple[int, int, int]]:
         indices.append((row, col, mode))
 
     return indices
+
 
 def get_filtered_positions(
     data: dict[str, Tensor], 
@@ -141,6 +155,7 @@ def find_neurons_for_query_DLA(
     k: int = 25,
 ) -> dict[int, list[int]]:
     legal_square_id = neel_utils.to_id(query[0].feature_name.split()[0])
+
     W_out = model.W_out[1:, :].detach().clone()
     unembed = model.W_U[:, legal_square_id].detach().clone()
     weights = einops.einsum(W_out, unembed, "n_layers d_mlp d_model, d_model -> n_layers d_mlp")
@@ -149,21 +164,8 @@ def find_neurons_for_query_DLA(
 
     for i in tqdm(range(0, len(positions), batch_size), desc="Batches"):
         batch = positions[i:i + batch_size]
-        seq_lengths = [pos.shape[0] for pos in batch]
-        max_len = max(seq_lengths)
-        
-        padded_batch = []
-        for pos, length in zip(batch, seq_lengths):
-            if length < max_len:
-                padding = t.zeros(max_len - length, dtype=pos.dtype, device=pos.device)
-                padded = t.cat([pos, padding])
-            else:
-                padded = pos
-            padded_batch.append(padded)
-        
-        batch_tensor = t.stack(padded_batch).to(device) 
-        batch_indices = t.arange(len(batch), device=device)
-        last_token_indices = t.tensor([length - 1 for length in seq_lengths], device=device)
+
+        batch_tensor, batch_indices, last_token_indices = right_pad(batch)
 
         batch_acts = {}
         with model.trace(batch_tensor):
@@ -202,6 +204,130 @@ def merge_dicts(dicts: list[dict]):
     return merged
 
 
+def get_legal_moves_batch(
+    batch: list[Int[Tensor, "seq"]],
+) -> list[list[int]]:
+    """Return a list of list of ints in token id format, where each inner list corresponds to the legal moves at the final position of its batch example"""
+    legal_moves_per_position = []
+
+    for pos in batch:
+        squares = neel_utils.to_square(pos.cpu())
+        squares_tensor = t.tensor(squares)
+        _, legal_moves_tensor, _ = neel_utils.get_board_states_and_legal_moves(squares_tensor)
+        legal_squares = t.where(legal_moves_tensor[-1].flatten())[0].tolist()
+        legal_token_ids = [neel_utils.to_id(sq) for sq in legal_squares]
+        legal_moves_per_position.append(legal_token_ids)
+
+    return legal_moves_per_position
+
+
+def right_pad(
+    batch: list[Int[Tensor, "..."]],
+) -> Tuple[Int[Tensor, "batch seq"], Int[Tensor, "batch"], Int[Tensor, "batch"]]:
+    batch_indices = t.arange(len(batch), device=device)
+    seq_lengths = [pos.shape[0] for pos in batch]
+    last_token_indices = t.tensor([length - 1 for length in seq_lengths], device=device)
+    max_len = max(seq_lengths)
+    
+    padded_batch = []
+    for pos, length in zip(batch, seq_lengths):
+        if length < max_len:
+            padding = t.zeros(max_len - length, dtype=pos.dtype, device=pos.device)
+            padded = t.cat([pos, padding])
+        else:
+            padded = pos
+        padded_batch.append(padded)
+    
+    batch_tensor = t.stack(padded_batch).to(device) 
+    return batch_tensor, batch_indices, last_token_indices
+
+
+def no_ablation(
+    model: NNsightModel,
+    batch_tensor: Int[Tensor, "batch seq"],
+    batch_indices: Int[Tensor, "batch"],
+    last_token_indices: Int[Tensor, "batch"],
+    legal_square_id: int,
+) -> Tuple[Float[Tensor, "batch d_vocab"], Float[Tensor, "batch"], Float[Tensor, "batch"]]:
+    with model.trace(batch_tensor):
+        logits = model.unembed.output[batch_indices, last_token_indices].save()
+        probs = t.nn.functional.softmax(logits, dim=-1)
+        
+        logits_square = logits[:, legal_square_id].save()
+        probs_square = probs[:, legal_square_id].save()
+
+    return logits, logits_square, probs_square
+
+
+def zero_ablation(
+    model: NNsightModel,
+    batch_tensor: Int[Tensor, "batch seq"],
+    batch_indices: Int[Tensor, "batch"],
+    last_token_indices: Int[Tensor, "batch"],
+    legal_square_id: int,
+    neurons: dict[int, list[int]],
+) -> Tuple[Float[Tensor, "batch d_vocab"], Float[Tensor, "batch"], Float[Tensor, "batch"]]:
+    with model.trace(batch_tensor):
+        for layer in range(1, model.cfg.n_layers):
+            if neurons[layer]:
+                neuron_indices = t.tensor(neurons[layer], device=device)
+                n_neurons = len(neurons[layer])
+                batch_indices_repeated = einops.repeat(
+                    batch_indices,
+                    'batch -> batch neurons',
+                    neurons=n_neurons,
+                )
+                last_token_indices_repeated = einops.repeat(
+                    last_token_indices,
+                    'batch -> batch neurons',
+                    neurons=n_neurons,
+                )
+                neuron_indices_repeated = einops.repeat(
+                    neuron_indices,
+                    'neurons -> batch neurons',
+                    batch=len(batch_tensor),
+                )
+                model.blocks[layer].mlp.hook_post.output[
+                    batch_indices_repeated, 
+                    last_token_indices_repeated, 
+                    neuron_indices_repeated
+                ] = 0
+        
+        logits = model.unembed.output[batch_indices, last_token_indices].save()
+        probs = t.nn.functional.softmax(logits, dim=-1)
+        
+        logits_square = logits[:, legal_square_id].save()
+        probs_square = probs[:, legal_square_id].save()
+
+        return logits, logits_square, probs_square
+
+
+def is_accurate_batch(
+    logits: Float[Tensor, "batch d_vocab"],
+    legal_moves_batch: list[list[int]],
+    legal_square_id,
+) -> list[bool]:
+    """If there are K legal moves, we say accurate if the legal square is in the
+    top K logits"""
+    accurate = []
+
+    for j, legal_moves in enumerate(legal_moves_batch):
+        k = len(legal_moves)
+
+        top_k_tokens = logits[j].topk(k=k).indices.tolist()
+        accurate.append(legal_square_id in top_k_tokens)
+        
+    return accurate
+
+
+def below_threshold(
+    probs_square: Float[Tensor, "batch"],
+    legal_moves_batch: list[list[int]],
+    alpha: float = 0.01,
+) -> list[bool]:
+    return [(prob < alpha * 1 / len(legal_moves)).item() for prob, legal_moves in zip(probs_square, legal_moves_batch)]
+
+
 def intervene(
     model: NNsightModel, 
     positions: list[Int[Tensor, "n_moves"]], 
@@ -211,11 +337,12 @@ def intervene(
     dla: bool = False,
     k: int | None = None,
     batch_size: int = 1024
-) -> dict[str, float]:
+) -> InterventionMetrics:
     if dla:
         neurons = find_neurons_for_query_DLA(model, dla_positions, query, k=k)
     else:
         neurons = merge_dicts([find_neurons_for_query(query) for query in dt_queries])
+
     print(f"Ablating {sum(len(neurons) for neurons in neurons.values())} neurons")
     legal_square_id = neel_utils.to_id(query[0].feature_name.split()[0])
 
@@ -224,90 +351,46 @@ def intervene(
     total_clean_accuracy = 0
     total_corrupted_accuracy = 0
     total_below_1_percent = 0
+    total_below_5_percent = 0
+    total_below_10_percent = 0
 
     for i in tqdm(range(0, len(positions), batch_size), desc="Batches"):
         batch = positions[i:i + batch_size]
-        
-        seq_lengths = [pos.shape[0] for pos in batch]
-        max_len = max(seq_lengths)
-        
-        padded_batch = []
-        for pos, length in zip(batch, seq_lengths):
-            if length < max_len:
-                padding = t.zeros(max_len - length, dtype=pos.dtype, device=pos.device)
-                padded = t.cat([pos, padding])
-            else:
-                padded = pos
-            padded_batch.append(padded)
-        
-        batch_tensor = t.stack(padded_batch).to(device) 
-        batch_indices = t.arange(len(batch), device=device)
-        last_token_indices = t.tensor([length - 1 for length in seq_lengths], device=device)
 
-        # Get legal moves for each position in the batch
-        legal_moves_per_position = []
-        for pos in batch:
-            squares = neel_utils.to_square(pos.cpu())
-            squares_tensor = t.tensor(squares)
-            _, legal_moves_tensor, _ = neel_utils.get_board_states_and_legal_moves(squares_tensor)
-            legal_squares = t.where(legal_moves_tensor[-1].flatten())[0].tolist()
-            legal_token_ids = [neel_utils.to_id(sq) for sq in legal_squares]
-            legal_moves_per_position.append(legal_token_ids)
+        legal_moves_batch = get_legal_moves_batch(batch)
+        batch_tensor, batch_indices, last_token_indices = right_pad(batch) 
 
-        with model.trace(batch_tensor):
-            clean_logits = model.unembed.output[batch_indices, last_token_indices].save()
-            clean_probs = t.nn.functional.softmax(clean_logits, dim=-1)
-            
-            clean_logits_square = clean_logits[:, legal_square_id].save()
-            clean_probs_square = clean_probs[:, legal_square_id].save()
+        clean_logits, clean_logits_square, clean_probs_square = no_ablation(
+            model, 
+            batch_tensor, 
+            batch_indices,
+            last_token_indices,
+            legal_square_id,
+        )
 
-        with model.trace(batch_tensor):
-            for layer in range(1, model.cfg.n_layers):
-                if neurons[layer]:
-                    neuron_indices = t.tensor(neurons[layer], device=device)
-                    n_neurons = len(neurons[layer])
-                    batch_indices_repeated = einops.repeat(
-                        batch_indices,
-                        'batch -> batch neurons',
-                        neurons=n_neurons,
-                    )
-                    last_token_indices_repeated = einops.repeat(
-                        last_token_indices,
-                        'batch -> batch neurons',
-                        neurons=n_neurons,
-                    )
-                    neuron_indices_repeated = einops.repeat(
-                        neuron_indices,
-                        'neurons -> batch neurons',
-                        batch=len(batch),
-                    )
-                    model.blocks[layer].mlp.hook_post.output[
-                        batch_indices_repeated, 
-                        last_token_indices_repeated, 
-                        neuron_indices_repeated
-                    ] = 0
-            
-            corrupted_logits = model.unembed.output[batch_indices, last_token_indices].save()
-            corrupted_probs = t.nn.functional.softmax(corrupted_logits, dim=-1)
-            
-            corrupted_logits_square = corrupted_logits[:, legal_square_id].save()
-            corrupted_probs_square = corrupted_probs[:, legal_square_id].save()
+        corrupted_logits, corrupted_logits_square, corrupted_probs_square = zero_ablation(
+            model, 
+            batch_tensor, 
+            batch_indices,
+            last_token_indices,
+            legal_square_id,
+            neurons,
+        )
 
-        # Calculate accuracy for this batch
-        for j, legal_moves in enumerate(legal_moves_per_position):
-            k = len(legal_moves)
+        is_accurate_clean = is_accurate_batch(clean_logits, legal_moves_batch, legal_square_id)
+        total_clean_accuracy += sum(is_accurate_clean)
 
-            clean_top_k = t.topk(clean_logits[j], k=k).indices
-            if legal_square_id in clean_top_k.tolist():
-                total_clean_accuracy += 1
-            
-            corrupted_top_k = t.topk(corrupted_logits[j], k=k).indices
-            if legal_square_id in corrupted_top_k.tolist():
-                total_corrupted_accuracy += 1
+        is_accurate_corrupted = is_accurate_batch(corrupted_logits, legal_moves_batch, legal_square_id)
+        total_corrupted_accuracy += sum(is_accurate_corrupted)
 
-            # Check if dropped below 1 percent of original accuracy
-            if corrupted_probs_square[j] < 0.01 * 1/k:
-                total_below_1_percent += 1
+        below_1_percent_corrupted = below_threshold(corrupted_probs_square, legal_moves_batch, alpha=0.01)
+        total_below_1_percent += sum(below_1_percent_corrupted)
+
+        below_5_percent_corrupted = below_threshold(corrupted_probs_square, legal_moves_batch, alpha=0.05)
+        total_below_5_percent += sum(below_5_percent_corrupted)
+
+        below_10_percent_corrupted = below_threshold(corrupted_probs_square, legal_moves_batch, alpha=0.1)
+        total_below_10_percent += sum(below_10_percent_corrupted)
         
         total_logit_diff += (clean_logits_square - corrupted_logits_square).sum().item()
         total_prob_diff += (clean_probs_square - corrupted_probs_square).sum().item()
@@ -317,16 +400,69 @@ def intervene(
     avg_clean_accuracy = total_clean_accuracy / len(positions)
     avg_corrupted_accuracy = total_corrupted_accuracy / len(positions)
     avg_num_below_1_percent = total_below_1_percent / len(positions)
-    
-    return {
-        "logit_diff": avg_logit_diff, 
-        "prob_diff": avg_prob_diff,
-        "clean_accuracy": avg_clean_accuracy,
-        "corrupted_accuracy": avg_corrupted_accuracy,
-        "accuracy_diff": avg_clean_accuracy - avg_corrupted_accuracy,
-        "below_1_percent": avg_num_below_1_percent,
-    }
+    avg_num_below_5_percent = total_below_5_percent / len(positions)
+    avg_num_below_10_percent = total_below_10_percent / len(positions)
+
+    return InterventionMetrics(
+        logit_diff=avg_logit_diff,
+        prob_diff=avg_prob_diff,
+        clean_accuracy=avg_clean_accuracy,
+        corrupted_accuracy=avg_corrupted_accuracy,
+        accuracy_diff=avg_clean_accuracy - avg_corrupted_accuracy,
+        below_1_percent=avg_num_below_1_percent,
+        below_5_percent=avg_num_below_5_percent,
+        below_10_percent=avg_num_below_10_percent,
+    )
         
+
+def print_table(intervened_metrics: InterventionMetrics, control_metrics: InterventionMetrics) -> None:
+    table = Table(title="Intervention Results")
+    
+    table.add_column("Metric", style="", no_wrap=True)
+    table.add_column("Intervention", justify="right", style="")
+    table.add_column("Control", justify="right", style="")
+    
+    table.add_row(
+        "Logit Diff",
+        f"{intervened_metrics.logit_diff:.4f}",
+        f"{control_metrics.logit_diff:.4f}"
+    )
+    table.add_row(
+        "Prob Diff",
+        f"{intervened_metrics.prob_diff:.4f}",
+        f"{control_metrics.prob_diff:.4f}"
+    )
+    table.add_row(
+        "Clean Accuracy",
+        f"{intervened_metrics.clean_accuracy:.2%}",
+        f"{control_metrics.clean_accuracy:.2%}"
+    )
+    table.add_row(
+        "Corrupted Accuracy",
+        f"{intervened_metrics.corrupted_accuracy:.2%}",
+        f"{control_metrics.corrupted_accuracy:.2%}"
+    )
+    table.add_row(
+        "Accuracy Diff",
+        f"{intervened_metrics.accuracy_diff:.2%}",
+        f"{control_metrics.accuracy_diff:.2%}"
+    )
+    table.add_row(
+        "Below 1 Percent Original",
+        f"{intervened_metrics.below_1_percent:.2%}",
+        f"{control_metrics.below_1_percent:.2%}"
+    )
+    table.add_row(
+        "Below 5 Percent",
+        f"{intervened_metrics.below_5_percent:.2%}",
+        f"{control_metrics.below_5_percent:.2%}"
+    )
+    table.add_row(
+        "Below 10 Percent",
+        f"{intervened_metrics.below_10_percent:.2%}",
+        f"{control_metrics.below_10_percent:.2%}"
+    )
+    rprint(table)
 
 if __name__ == "__main__":
     # Hack: messed up .pkl b/c I put dataclass definition in same pickling script
@@ -357,6 +493,9 @@ if __name__ == "__main__":
     control_positions_encoded, control_positions_decoded = get_filtered_positions(data, intervention_query, control_query, intervention=False)
     #sanity_check(intervention_positions_decoded, control_positions_decoded)
 
+    rprint(f"\n[bold]Number of intervention positions:[/bold] {len(intervention_positions_encoded)}")
+    rprint(f"[bold]Number of control positions:[/bold] {len(control_positions_encoded)}")
+
     intervened_metrics = intervene(
         model=model,
         positions=intervention_positions_encoded,
@@ -376,53 +515,4 @@ if __name__ == "__main__":
         # k=k,
     )
 
-    # Create a rich table
-    rprint(f"\n[bold]Number of intervention positions:[/bold] {len(intervention_positions_encoded)}")
-    rprint(f"[bold]Number of control positions:[/bold] {len(control_positions_encoded)}")
-
-    table = Table(title="Intervention Results")
-    
-    table.add_column("Metric", style="", no_wrap=True)
-    table.add_column("Intervention", justify="right", style="")
-    table.add_column("Control", justify="right", style="")
-    
-    table.add_row(
-        "Logit Diff",
-        f"{intervened_metrics['logit_diff']:.4f}",
-        f"{control_metrics['logit_diff']:.4f}"
-    )
-    table.add_row(
-        "Prob Diff",
-        f"{intervened_metrics['prob_diff']:.4f}",
-        f"{control_metrics['prob_diff']:.4f}"
-    )
-    table.add_row(
-        "Clean Accuracy",
-        f"{intervened_metrics['clean_accuracy']:.2%}",
-        f"{control_metrics['clean_accuracy']:.2%}"
-    )
-    table.add_row(
-        "Corrupted Accuracy",
-        f"{intervened_metrics['corrupted_accuracy']:.2%}",
-        f"{control_metrics['corrupted_accuracy']:.2%}"
-    )
-    table.add_row(
-        "Accuracy Diff",
-        f"{intervened_metrics['accuracy_diff']:.2%}",
-        f"{control_metrics['accuracy_diff']:.2%}"
-    )
-    table.add_row(
-        "Below 1 Percent",
-        f"{intervened_metrics['below_1_percent']:.2%}",
-        f"{control_metrics['below_1_percent']:.2%}"
-    )
-    rprint(table)
-
-    # dt_neurons = find_neurons_for_query(intervention_query[:2])
-    # dla_neurons = find_neurons_for_query_DLA(model, intervention_positions_encoded, intervention_query, k=25)
-    # dla_unique_neurons = {layer: set(dla_neurons[layer]) - set(dt_neurons[layer]) for layer in dt_neurons.keys()}
-    # pprint(dt_neurons)
-    # print("="*80)
-    # pprint(dla_neurons)
-    # print("="*80)
-    # pprint(dla_unique_neurons)
+    print_table(intervened_metrics, control_metrics)
