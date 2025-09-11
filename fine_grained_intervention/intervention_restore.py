@@ -42,6 +42,33 @@ class RestoreInterventionMetrics:
     prob_diff: float
 
 
+def filter_illegal_square(
+    positions_encoded: list[Int[Tensor, "n_moves"]],
+    positions_decoded: list[Int[Tensor, "n_moves"]],
+    square: str = "C0",
+) -> Tuple[list[Int[Tensor, "n_moves"]], list[Int[Tensor, "n_moves"]]]:
+    """Filter to only keep positions where the specified square is NOT a legal move"""
+    square_id = neel_utils.to_id(square)
+    
+    filtered_encoded = []
+    filtered_decoded = []
+    
+    for enc_pos, dec_pos in zip(positions_encoded, positions_decoded):
+        board_states, legal_moves, _ = neel_utils.get_board_states_and_legal_moves(dec_pos)
+        # Check if square is legal in the final position
+        legal_squares = t.where(legal_moves[-1].flatten())[0].tolist()
+        legal_token_ids = [neel_utils.to_id(sq) for sq in legal_squares]
+        
+        # Only keep positions where the square is NOT legal
+        if square_id not in legal_token_ids:
+            filtered_encoded.append(enc_pos)
+            filtered_decoded.append(dec_pos)
+    
+    print(f"Filtered from {len(positions_encoded)} to {len(filtered_encoded)} positions (removed {len(positions_encoded) - len(filtered_encoded)} where {square} was legal)")
+    
+    return filtered_encoded, filtered_decoded
+
+
 def get_filtered_positions(
     data: dict[str, Tensor], 
     query: list[Condition], 
@@ -116,6 +143,7 @@ def mean_ablation(
     legal_square_id: int,
     neurons: dict[int, list[int]],
     mean_neuron_acts: dict[int, Tensor],
+    device: str = "cuda",
 ) -> Tuple[Float[Tensor, "batch d_vocab"], Float[Tensor, "batch"], Float[Tensor, "batch"]]:
     with model.trace(batch_tensor):
         for layer, neuron_indices_list in neurons.items():
@@ -216,6 +244,7 @@ def intervene(
             legal_square_id,
             neurons,
             mean_neuron_acts,
+            device=device,
         )
 
         total_logit_diff += (restored_logits_square - clean_logits_square).sum().item()
@@ -310,6 +339,7 @@ if __name__ == "__main__":
     #sanity_check(base_positions_decoded)
 
     intervention_positions_encoded, intervention_positions_decoded = get_filtered_positions(data, intervention_query)
+    intervention_positions_encoded, intervention_positions_decoded = filter_illegal_square(intervention_positions_encoded, intervention_positions_decoded, square="C0")
 
     rprint(f"\n[bold]Number of intervention positions:[/bold] {len(intervention_positions_encoded)}")
 
