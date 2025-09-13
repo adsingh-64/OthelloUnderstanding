@@ -1,6 +1,5 @@
 """
-Train decision tree on neuron using continuous features
-of board state projection onto probe directions
+Train decision tree on neuron using board state features
 """
 
 import torch as t
