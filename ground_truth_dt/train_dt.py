@@ -204,8 +204,8 @@ if __name__ == "__main__":
     model = load_model()
     X_train, y_train, X_test, y_test = load_data(
         model, 
-        n_train=50, 
-        n_test=50,
+        n_train=6000, 
+        n_test=500,
         layer=layer,
     )
 
