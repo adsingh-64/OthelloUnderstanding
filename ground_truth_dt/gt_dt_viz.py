@@ -197,7 +197,7 @@ def load_all_trees(
     print("Loading all decision trees from disk... (this will happen only once)")
     return {
         layer: load_decision_tree_for_layer(layer=layer)
-        for layer in range(1, n_layers)
+        for layer in range(n_layers)
     }
 
 

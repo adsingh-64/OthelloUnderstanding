@@ -139,7 +139,7 @@ def find_neurons_for_query_DLA(
 ) -> dict[int, list[int]]:
     legal_square_id = neel_utils.to_id(legal_square)
 
-    W_out = model.W_out[1:, :].detach().clone()
+    W_out = model.W_out.detach().clone()
     unembed = model.W_U[:, legal_square_id].detach().clone()
     weights = einops.einsum(W_out, unembed, "n_layers d_mlp d_model, d_model -> n_layers d_mlp")
 
