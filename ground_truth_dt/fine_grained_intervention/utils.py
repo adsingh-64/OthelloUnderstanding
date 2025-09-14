@@ -164,7 +164,7 @@ def find_neurons_for_query_DLA(
     neuron_attrs_flattened = einops.rearrange(neuron_attrs, "n_layers d_mlp -> (n_layers d_mlp)")
 
     flattened_indices = neuron_attrs_flattened.topk(k=k).indices
-    results = {layer: [] for layer in range(1, model.cfg.n_layers)}
+    results = {layer: [] for layer in range(0, model.cfg.n_layers)}
     for idx in flattened_indices:
         idx = idx.item()
         layer = idx // model.cfg.d_mlp
