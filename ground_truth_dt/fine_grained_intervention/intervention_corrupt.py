@@ -134,6 +134,7 @@ def intervene(
         neurons = merge_dicts([find_neurons_for_query(query) for query in dt_queries])
 
     print(f"Ablating {sum(len(neurons) for neurons in neurons.values())} neurons")
+
     legal_square_id = neel_utils.to_id(legal_square)
 
     total_logit_diff = 0
@@ -260,23 +261,27 @@ if __name__ == "__main__":
     model = load_model(device=device)
     data = load_data(device=device)
 
-    intervention_query = {'C0_empty', 'D1_theirs', 'E2_mine'}
-    control_query = {'C0_empty', 'C1_theirs', 'C2_mine'}
+    intervention_query = {'C3_empty', 'D3_theirs', 'E3_mine'}
+    control_query = {'C3_empty', 'D4_theirs', 'E5_mine'}
 
-    dt_queries = [{'C0_empty', 'D1_theirs'}, {'C0_empty', 'NOT D1_mine'}, {'C0_empty', 'NOT D1_empty'}]
+    dt_queries = [{'C3_empty', 'D3_theirs', 'E3_mine'}]
+
+    legal_square = "C3"
 
     intervention_positions_encoded, intervention_positions_decoded = get_filtered_positions(data, intervention_query, control_query, intervention=True)
     control_positions_encoded, control_positions_decoded = get_filtered_positions(data, intervention_query, control_query, intervention=False)
     
     #sanity_check(intervention_positions_decoded, control_positions_decoded)
 
+    rprint("[bold]Intervention positions: (C3 legal due to C3-E3 column) ∧ ¬(C3 legal due to C3-E5 diagonal)[/bold]")
+    rprint("[bold]Intervention positions: (C3 legal due to C3-E5 diagonal) ∧ ¬(C3 legal due to C3-E3 column)[/bold]")
     rprint(f"\n[bold]Number of intervention positions:[/bold] {len(intervention_positions_encoded)}")
     rprint(f"[bold]Number of control positions:[/bold] {len(control_positions_encoded)}")
 
     intervened_metrics = intervene(
         model=model,
         positions=intervention_positions_encoded,
-        legal_square="C0",
+        legal_square=legal_square,
         dt_queries=dt_queries,
         # dla_positions=intervention_positions_encoded,
         # dla=True,
@@ -286,7 +291,7 @@ if __name__ == "__main__":
     control_metrics = intervene(
         model=model,
         positions=control_positions_encoded,
-        legal_square="C0",
+        legal_square=legal_square,
         dt_queries=dt_queries,
         # dla_positions=intervention_positions_encoded,
         # dla=True,

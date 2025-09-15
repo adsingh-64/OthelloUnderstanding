@@ -22,7 +22,7 @@ from rich.table import Table
 from pprint import pprint
 from dataclasses import dataclass
 
-from fine_grained_intervention.utils import (
+from cont_dt.fine_grained_intervention.utils import (
     load_model,
     load_data,
     get_filtered_positions,
@@ -263,25 +263,31 @@ if __name__ == "__main__":
     data = load_data(device=device)
 
     intervention_query = [
-        Condition(feature_name='C0 blank', operator='>', threshold=-1),
-        Condition(feature_name='D1 mine-theirs', operator='<=', threshold=1),
-        Condition(feature_name='E2 mine-theirs', operator='>', threshold=-1),
+        Condition(feature_name='C3 blank', operator='>', threshold=-1),
+        Condition(feature_name='D3 mine-theirs', operator='<=', threshold=1),
+        Condition(feature_name='E3 mine-theirs', operator='>', threshold=-1),
     ]
 
     dt_queries = [
-        [Condition(feature_name='C0 blank', operator='>', threshold=-1), Condition(feature_name='D1 mine-theirs', operator='<=', threshold=1)],
+        [
+            Condition(feature_name='C3 blank', operator='>', threshold=-1), 
+            Condition(feature_name='D3 mine-theirs', operator='<=', threshold=1), 
+        ],
     ]
 
     control_query = [
-        Condition(feature_name='C0 blank', operator='>', threshold=-1),
-        Condition(feature_name='C1 mine-theirs', operator='<=', threshold=1),
-        Condition(feature_name='C2 mine-theirs', operator='>', threshold=-1),
+        Condition(feature_name='C3 blank', operator='>', threshold=-1),
+        Condition(feature_name='D4 mine-theirs', operator='<=', threshold=1),
+        Condition(feature_name='E5 mine-theirs', operator='>', threshold=-1),
     ] 
 
     intervention_positions_encoded, intervention_positions_decoded = get_filtered_positions(data, intervention_query, control_query, intervention=True)
     control_positions_encoded, control_positions_decoded = get_filtered_positions(data, intervention_query, control_query, intervention=False)
+    
     #sanity_check(intervention_positions_decoded, control_positions_decoded)
 
+    rprint("[bold]Intervention positions: (C3 legal due to C3-E3 column) ∧ ¬(C3 legal due to C3-E5 diagonal)[/bold]")
+    rprint("[bold]Intervention positions: (C3 legal due to C3-E5 diagonal) ∧ ¬(C3 legal due to C3-E3 column)[/bold]")
     rprint(f"\n[bold]Number of intervention positions:[/bold] {len(intervention_positions_encoded)}")
     rprint(f"[bold]Number of control positions:[/bold] {len(control_positions_encoded)}")
 

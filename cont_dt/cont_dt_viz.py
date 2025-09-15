@@ -291,13 +291,13 @@ def find_neurons_for_query(query: DecisionPath) -> dict[int, list[int]]:
 if __name__ == "__main__":
     all_trees = load_all_trees()
 
-    feature_names = get_feature_names()
-    viz = visualize_decision_tree(all_trees[5][1952], feature_names)
+    # feature_names = get_feature_names()
+    # viz = visualize_decision_tree(all_trees[5][1952], feature_names)
     
-    process_neuron(all_trees[5][1952].tree)
-    # query = [
-    #     Condition(feature_name='C0 blank', operator='>', threshold=-1),
-    #     Condition(feature_name='D1 mine-theirs', operator='<=', threshold=1),
-    #     #Condition(feature_name='E2 mine-theirs', operator='>', threshold=-1),
-    # ] 
-    # pprint(check_model(all_trees, query))
+    # process_neuron(all_trees[5][1952].tree)
+    query = [
+        Condition(feature_name='C0 blank', operator='>', threshold=-1),
+        Condition(feature_name='D1 mine-theirs', operator='<=', threshold=1),
+        #Condition(feature_name='E2 mine-theirs', operator='>', threshold=-1),
+    ] 
+    pprint(check_model(all_trees, query))
