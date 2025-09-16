@@ -57,7 +57,7 @@ def zero_ablation(
     neurons: dict[int, list[int]],
 ) -> Tuple[Float[Tensor, "batch d_vocab"], Float[Tensor, "batch"], Float[Tensor, "batch"]]:
     with model.trace(batch_tensor):
-        for layer in range(0, model.cfg.n_layers):
+        for layer in range(0, model.cfg.n_layers - 1):
             if neurons.get(layer):
                 neuron_indices = t.tensor(neurons[layer], device=device)
                 n_neurons = len(neurons[layer])

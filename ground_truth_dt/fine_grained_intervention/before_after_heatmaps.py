@@ -1,7 +1,4 @@
-"""Fine-grained intervention for length 3 legal move conditions
-GROUND_TRUTH_DT VERSION - ORIGINAL 48 SQUARES SETUP
-Iterates over all squares outside center C2-F5 region (48 total)
-"""
+"""Fine-grained intervention for length 3 legal move conditions"""
 
 import torch as t
 from torch import Tensor
@@ -60,7 +57,7 @@ def zero_ablation(
     neurons: dict[int, list[int]],
 ) -> Tuple[Float[Tensor, "batch d_vocab"], Float[Tensor, "batch"], Float[Tensor, "batch"]]:
     with model.trace(batch_tensor):
-        for layer in range(0, model.cfg.n_layers - 1):
+        for layer in range(0, model.cfg.n_layers):
             if neurons.get(layer):
                 neuron_indices = t.tensor(neurons[layer], device=device)
                 n_neurons = len(neurons[layer])
@@ -258,157 +255,58 @@ def print_table(intervened_metrics: InterventionMetrics, control_metrics: Interv
     )
     rprint(table)
 
+
 if __name__ == "__main__":
+    MIDDLE_SQUARES = [27, 28, 35, 36]
+    ALL_SQUARES = [i for i in range(64) if i not in MIDDLE_SQUARES]
     device = "cuda" if t.cuda.is_available() else "cpu"
 
     model = load_model(device=device)
     data = load_data(device=device)
 
-    # Generate multiple setups across board edges (avoid center rows/cols 2-5)
-    letters = 'ABCDEFGH'
+    intervention_query = {'C3_empty', 'D3_theirs', 'E3_mine'}
+    control_query = {'C3_empty', 'D4_theirs', 'E5_mine'}
 
-    def in_bounds(x: int, y: int) -> bool:
-        return 0 <= x < 8 and 0 <= y < 8
+    dt_queries = [{'C3_empty', 'D3_theirs', 'E3_mine'}]
 
-    def sq_name(x: int, y: int) -> str:
-        return f"{letters[x]}{y}"
+    legal_square = "C3"
 
-    setups = []  # tuples: (legal_square, intervention_query_set, control_query_set, dt_query_set)
+    intervention_positions_encoded, intervention_positions_decoded = get_filtered_positions(data, intervention_query, control_query, intervention=True)
+    control_positions_encoded, control_positions_decoded = get_filtered_positions(data, intervention_query, control_query, intervention=False)
 
-    # RNG for randomized assignment of intervention/control
-    rng = np.random.default_rng(0)
+    ### Plot before after heatmaps
+    neurons = merge_dicts([find_neurons_for_query(query) for query in dt_queries])
+    
+    batch_tensor, batch_indices, last_token_indices = right_pad([intervention_positions_encoded[0]])
 
-    def sign_to_center(v: int) -> int:
-        if v < 2:
-            return 1
-        if v > 5:
-            return -1
-        return 0
-
-    for y in range(8):
-        for x in range(8):
-            if 2 <= x <= 5 and 2 <= y <= 5:
-                continue  # skip center 4x4
-
-            sx = sign_to_center(x)
-            sy = sign_to_center(y)
-
-            # Row/col direction pointing to center
-            if sx != 0 and sy == 0:
-                axis_dir = (sx, 0)
-            elif sx == 0 and sy != 0:
-                axis_dir = (0, sy)
-            else:
-                axis_dir = (sx, 0) if abs(x - 3.5) >= abs(y - 3.5) else (0, sy)
-
-            # Diagonal direction pointing to center
-            if sx != 0 and sy != 0:
-                diag_dir = (sx, sy)
-            elif sx != 0:
-                dy = 1 if y < 3.5 else -1
-                diag_dir = (sx, dy)
-            else:
-                dx = 1 if x < 3.5 else -1
-                diag_dir = (dx, sy)
-
-            (ax, ay) = axis_dir
-            (dx, dy) = diag_dir
-            if not (in_bounds(x + 2*ax, y + 2*ay) and in_bounds(x + 2*dx, y + 2*dy)):
-                continue
-
-            s0 = sq_name(x, y)
-            ax_s1 = sq_name(x+ax, y+ay)
-            ax_s2 = sq_name(x+2*ax, y+2*ay)
-            dg_s1 = sq_name(x+dx, y+dy)
-            dg_s2 = sq_name(x+2*dx, y+2*dy)
-
-            axis_query = {f'{s0}_empty', f'{ax_s1}_theirs', f'{ax_s2}_mine'}
-            diag_query = {f'{s0}_empty', f'{dg_s1}_theirs', f'{dg_s2}_mine'}
-
-            if rng.random() < 0.5:
-                intervention_query, control_query = diag_query, axis_query
-                dt_query = {f'{s0}_empty', f'{dg_s1}_theirs'}
-            else:
-                intervention_query, control_query = axis_query, diag_query
-                dt_query = {f'{s0}_empty', f'{ax_s1}_theirs'}
-
-            dt_queries = [dt_query]
-            setups.append((s0, intervention_query, control_query, dt_queries))
-
-    # Aggregate across setups
-    agg_intervened = InterventionMetrics(0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0)
-    agg_control = InterventionMetrics(0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0)
-    used = 0
-
-    for legal_square, intervention_query, control_query, dt_queries in setups:
-        intervention_positions_encoded, _ = get_filtered_positions(data, intervention_query, control_query, intervention=True)
-        control_positions_encoded, _ = get_filtered_positions(data, intervention_query, control_query, intervention=False)
-
-        if len(intervention_positions_encoded) == 0 or len(control_positions_encoded) == 0:
-            continue
-
-        rprint(f"[dim]Setup legal square {legal_square}: |interv|={len(intervention_positions_encoded)}, |ctrl|={len(control_positions_encoded)}[/dim]")
-
-        intervened_metrics = intervene(
-            model=model,
-            positions=intervention_positions_encoded,
-            legal_square=legal_square,
-            dt_queries=dt_queries,
-            device=device,
-        )
-        control_metrics = intervene(
-            model=model,
-            positions=control_positions_encoded,
-            legal_square=legal_square,
-            dt_queries=dt_queries,
-        )
-
-        agg_intervened = InterventionMetrics(
-            logit_diff=agg_intervened.logit_diff + intervened_metrics.logit_diff,
-            prob_diff=agg_intervened.prob_diff + intervened_metrics.prob_diff,
-            clean_accuracy=agg_intervened.clean_accuracy + intervened_metrics.clean_accuracy,
-            corrupted_accuracy=agg_intervened.corrupted_accuracy + intervened_metrics.corrupted_accuracy,
-            accuracy_diff=agg_intervened.accuracy_diff + intervened_metrics.accuracy_diff,
-            below_1_percent=agg_intervened.below_1_percent + intervened_metrics.below_1_percent,
-            below_5_percent=agg_intervened.below_5_percent + intervened_metrics.below_5_percent,
-            below_10_percent=agg_intervened.below_10_percent + intervened_metrics.below_10_percent,
-        )
-        agg_control = InterventionMetrics(
-            logit_diff=agg_control.logit_diff + control_metrics.logit_diff,
-            prob_diff=agg_control.prob_diff + control_metrics.prob_diff,
-            clean_accuracy=agg_control.clean_accuracy + control_metrics.clean_accuracy,
-            corrupted_accuracy=agg_control.corrupted_accuracy + control_metrics.corrupted_accuracy,
-            accuracy_diff=agg_control.accuracy_diff + control_metrics.accuracy_diff,
-            below_1_percent=agg_control.below_1_percent + control_metrics.below_1_percent,
-            below_5_percent=agg_control.below_5_percent + control_metrics.below_5_percent,
-            below_10_percent=agg_control.below_10_percent + control_metrics.below_10_percent,
-        )
-        used += 1
-
-    if used == 0:
-        rprint("[bold red]No valid setups found with non-empty position sets. Try relaxing constraints or providing more data.[/bold red]")
-        sys.exit(0)
-
-    avg_intervened = InterventionMetrics(
-        logit_diff=agg_intervened.logit_diff/used,
-        prob_diff=agg_intervened.prob_diff/used,
-        clean_accuracy=agg_intervened.clean_accuracy/used,
-        corrupted_accuracy=agg_intervened.corrupted_accuracy/used,
-        accuracy_diff=agg_intervened.accuracy_diff/used,
-        below_1_percent=agg_intervened.below_1_percent/used,
-        below_5_percent=agg_intervened.below_5_percent/used,
-        below_10_percent=agg_intervened.below_10_percent/used,
+    logits_clean, _, _ = no_ablation(
+        model,
+        batch_tensor,
+        batch_indices, 
+        last_token_indices,
+        legal_square_id=19,
     )
-    avg_control = InterventionMetrics(
-        logit_diff=agg_control.logit_diff/used,
-        prob_diff=agg_control.prob_diff/used,
-        clean_accuracy=agg_control.clean_accuracy/used,
-        corrupted_accuracy=agg_control.corrupted_accuracy/used,
-        accuracy_diff=agg_control.accuracy_diff/used,
-        below_1_percent=agg_control.below_1_percent/used,
-        below_5_percent=agg_control.below_5_percent/used,
-        below_10_percent=agg_control.below_10_percent/used,
+    print(logits_clean.shape)
+    probs_clean = t.nn.functional.softmax(logits_clean, dim = -1)
+    probs_clean_square = t.zeros((8, 8))
+    probs_clean_square.flatten()[ALL_SQUARES] = probs_clean[0, 1:]
+
+    logits_corrupted, _, _ = zero_ablation(
+        model,
+        batch_tensor,
+        batch_indices, 
+        last_token_indices,
+        legal_square_id=19,
+    )
+    probs_corrupted = t.nn.functional.softmax(logits_corrupted, dim = -1)
+    probs_corrupted_square = t.zeros((8, 8))
+    probs_corrupted_square.flatten()[ALL_SQUARES] = probs_corrupted[0, 1:]
+
+    neel_utils.plot_board_values(
+        t.stack([probs_clean_square, probs_corrupted_square]),
+        board_titles=["Clean", "Corrupted"],
+        boards_per_row=2,
+        width=400,
+        height=200,
     )
 
-    rprint(f"\n[bold]Aggregated over {used} setups (excluding center rows/cols)[/bold]")
-    print_table(avg_intervened, avg_control)

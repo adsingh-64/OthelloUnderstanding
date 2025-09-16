@@ -57,7 +57,7 @@ def zero_ablation(
     neurons: dict[int, list[int]],
 ) -> Tuple[Float[Tensor, "batch d_vocab"], Float[Tensor, "batch"], Float[Tensor, "batch"]]:
     with model.trace(batch_tensor):
-        for layer in range(0, model.cfg.n_layers):
+        for layer in range(0, model.cfg.n_layers - 1):
             if neurons.get(layer):
                 neuron_indices = t.tensor(neurons[layer], device=device)
                 n_neurons = len(neurons[layer])
@@ -261,12 +261,12 @@ if __name__ == "__main__":
     model = load_model(device=device)
     data = load_data(device=device)
 
-    intervention_query = {'C3_empty', 'D3_theirs', 'E3_mine'}
-    control_query = {'C3_empty', 'D4_theirs', 'E5_mine'}
+    intervention_query = {'D0_empty', 'D1_theirs', 'D2_mine'}
+    control_query = {'D0_empty', 'C1_theirs', 'B2_mine'}
 
-    dt_queries = [{'C3_empty', 'D3_theirs', 'E3_mine'}]
+    dt_queries = [{'D0_empty', 'D1_theirs'}]
 
-    legal_square = "C3"
+    legal_square = "D0"
 
     intervention_positions_encoded, intervention_positions_decoded = get_filtered_positions(data, intervention_query, control_query, intervention=True)
     control_positions_encoded, control_positions_decoded = get_filtered_positions(data, intervention_query, control_query, intervention=False)

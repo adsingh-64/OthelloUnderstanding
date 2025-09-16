@@ -20,6 +20,7 @@ from rich.table import Table
 from pprint import pprint
 from dataclasses import dataclass
 
+
 def load_model(
     model_name: str = "Baidicoot/Othello-GPT-Transformer-Lens",
     device="cuda",
