@@ -443,7 +443,7 @@ if __name__ == "__main__":
 
     for row in range(8):
         for col in range(8):
-            if 3 <= row <= 4 and 3 <= col <= 4:
+            if 2 <= row <= 5 and 2 <= col <= 5:
                 continue
 
             coords = (row, col)
@@ -473,8 +473,8 @@ if __name__ == "__main__":
 
     current_dir = Path(__file__).resolve().parent
 
-    intervention_save_path = current_dir / "intervention_metrics_60_squares.json"
-    control_save_path = current_dir / "control_metrics_60_squares.json"
+    intervention_save_path = current_dir / "intervention_metrics_48_squares.json"
+    control_save_path = current_dir / "control_metrics_48_squares.json"
 
     avg_intervened.save(file_path=intervention_save_path)
     avg_control.save(file_path=control_save_path)
