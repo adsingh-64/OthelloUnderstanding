@@ -1,4 +1,5 @@
 """Fine-grained intervention for length 3 legal move conditions"""
+from __future__ import annotations
 
 import torch as t
 from torch import Tensor
@@ -15,13 +16,15 @@ from ground_truth_dt.gt_dt_viz import find_neurons_for_query
 
 import json
 import sys
+from pathlib import Path
 from jaxtyping import Bool, Float, Int
 from typing import Tuple
 from tqdm import tqdm
 from rich import print as rprint
+from rich.panel import Panel
 from rich.table import Table
 from pprint import pprint
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 
 from ground_truth_dt.fine_grained_intervention.utils import (
     load_model,
@@ -38,14 +41,52 @@ from ground_truth_dt.fine_grained_intervention.utils import (
 
 @dataclass(frozen=True)
 class InterventionMetrics:
-    logit_diff: float
-    prob_diff: float
-    clean_accuracy: float
-    corrupted_accuracy: float
-    accuracy_diff: float
-    below_1_percent: float
-    below_5_percent: float
-    below_10_percent: float
+    logit_diff: float = 0.0
+    prob_diff: float = 0.0
+    clean_accuracy: float = 0.0
+    corrupted_accuracy: float = 0.0
+    accuracy_diff: float = 0.0
+    below_1_percent: float = 0.0
+    below_5_percent: float = 0.0
+    below_10_percent: float = 0.0
+
+    def __add__(self, other: InterventionMetrics) -> InterventionMetrics:
+        return InterventionMetrics(
+            logit_diff=self.logit_diff + other.logit_diff,
+            prob_diff=self.prob_diff + other.prob_diff,
+            clean_accuracy=self.clean_accuracy + other.clean_accuracy,
+            corrupted_accuracy=self.corrupted_accuracy + other.corrupted_accuracy,
+            accuracy_diff=self.accuracy_diff + other.accuracy_diff,
+            below_1_percent=self.below_1_percent + other.below_1_percent,
+            below_5_percent=self.below_5_percent + other.below_5_percent,
+            below_10_percent=self.below_10_percent + other.below_10_percent,
+        )
+
+    def __truediv__(self, divisor: float) -> InterventionMetrics:
+        return InterventionMetrics(
+            logit_diff=self.logit_diff / divisor,
+            prob_diff=self.prob_diff / divisor,
+            clean_accuracy=self.clean_accuracy / divisor,
+            corrupted_accuracy=self.corrupted_accuracy / divisor,
+            accuracy_diff=self.accuracy_diff / divisor,
+            below_1_percent=self.below_1_percent / divisor,
+            below_5_percent=self.below_5_percent / divisor,
+            below_10_percent=self.below_10_percent / divisor
+        )
+
+    def save(self, file_path: Path):
+        """Saves the metrics to a JSON file."""
+        # asdict converts the dataclass instance to a dictionary
+        with open(file_path, 'w') as f:
+            json.dump(asdict(self), f, indent=4)
+
+
+@dataclass
+class ExperimentSetup:
+    legal_square: str
+    intervention_query: set[str]
+    control_query: set[str]
+    dt_queries: list[set[str]]
 
 
 def zero_ablation(
@@ -255,34 +296,118 @@ def print_table(intervened_metrics: InterventionMetrics, control_metrics: Interv
     )
     rprint(table)
 
-if __name__ == "__main__":
-    device = "cuda" if t.cuda.is_available() else "cpu"
 
-    model = load_model(device=device)
-    data = load_data(device=device)
+def coords_to_square(coords: tuple[int, int]) -> str:
+    row, col = coords
+    row_letter = chr(row + ord("A"))
+    return f"{row_letter}{col}"
 
-    intervention_query = {'D0_empty', 'D1_theirs', 'D2_mine'}
-    control_query = {'D0_empty', 'C1_theirs', 'B2_mine'}
 
-    dt_queries = [{'D0_empty', 'D1_theirs'}]
+def square_to_coords(name: str) -> tuple[int, int]:
+    row_letter, col_letter = tuple(name)
+    return (ord(row_letter) - ord("A"), int(col_letter))
 
-    legal_square = "D0"
 
-    intervention_positions_encoded, intervention_positions_decoded = get_filtered_positions(data, intervention_query, control_query, intervention=True)
-    control_positions_encoded, control_positions_decoded = get_filtered_positions(data, intervention_query, control_query, intervention=False)
+def generate_experiment_setup(legal_square: str, rng: np.random.default_rng) -> ExperimentSetup:
+    row, col = square_to_coords(legal_square)
+    sx, sy = int(np.sign(3.5 - row)), int(np.sign(3.5 - col))
+    dx, dy = abs(3.5 - row), abs(3.5 - col)
+
+    diagonal = (
+        legal_square,
+        coords_to_square((row + sx, col + sy)),
+        coords_to_square((row + 2 * sx, col + 2 * sy)),
+    )
+
+    if dx >= dy:
+        axial_dir = (sx, 0)
+
+    else:
+        axial_dir = (0, sy)
+
+    ax, ay = axial_dir
+
+    axial = (
+        legal_square,
+        coords_to_square((row + ax, col + ay)),
+        coords_to_square((row + 2*ax, col + 2*ay)),
+    )
     
-    #sanity_check(intervention_positions_decoded, control_positions_decoded)
+    if rng.random() < 0.5:
+        intervention_query = {f'{diagonal[0]}_empty', f'{diagonal[1]}_theirs', f'{diagonal[2]}_mine'}
+        control_query = {f'{axial[0]}_empty', f'{axial[1]}_theirs', f'{axial[2]}_mine'}
+        dt_queries = [{f'{diagonal[0]}_empty', f'{diagonal[1]}_theirs'}]
 
-    rprint("[bold]Intervention positions: (C3 legal due to C3-E3 column) ∧ ¬(C3 legal due to C3-E5 diagonal)[/bold]")
-    rprint("[bold]Intervention positions: (C3 legal due to C3-E5 diagonal) ∧ ¬(C3 legal due to C3-E3 column)[/bold]")
-    rprint(f"\n[bold]Number of intervention positions:[/bold] {len(intervention_positions_encoded)}")
-    rprint(f"[bold]Number of control positions:[/bold] {len(control_positions_encoded)}")
+    else:
+        intervention_query = {f'{axial[0]}_empty', f'{axial[1]}_theirs', f'{axial[2]}_mine'}
+        control_query = {f'{diagonal[0]}_empty', f'{diagonal[1]}_theirs', f'{diagonal[2]}_mine'}
+        dt_queries = [{f'{axial[0]}_empty', f'{axial[1]}_theirs'}]
+
+    return ExperimentSetup(
+        legal_square=legal_square,
+        intervention_query=intervention_query,
+        control_query=control_query,
+        dt_queries=dt_queries,
+    )
+
+
+def display_experiment_summary(
+    setup: ExperimentSetup, 
+    n_intervention: int, 
+    n_control: int
+):
+    """Prints a single panel summarizing the setup and data counts."""
+    order_map = {'empty': 0, 'theirs': 1, 'mine': 2}
+
+    def sort_by_suffix(query_string: str) -> int:
+        suffix = query_string.split('_')[1]
+        return order_map.get(suffix, 99)
+
+    intervention_list = sorted(list(setup.intervention_query), key=sort_by_suffix)
+    control_list = sorted(list(setup.control_query), key=sort_by_suffix)
+
+    intervention_str = " AND ".join(intervention_list)
+    control_str = " AND ".join(control_list)
+
+    # This is the new, combined output string
+    output = (
+        f"[bold]Legal Square:[/] {setup.legal_square}\n"
+        f"[bold blue]Intervention:[/] {intervention_str} [dim](n={n_intervention})[/]\n"
+        f"[bold green]Control:[/]      {control_str} [dim](n={n_control})[/]"
+    )
+    
+    rprint(Panel(output, title="Experiment Setup", expand=False))
+
+
+def run_single_experiment(
+    experiment_setup: ExperimentSetup,
+    model: NNsightModel,
+    data: Tensor,
+    device: str,
+) -> tuple[InterventionMetrics | None, InterventionMetrics | None]:
+    intervention_positions_encoded, intervention_positions_decoded = get_filtered_positions(data, experiment_setup.intervention_query, experiment_setup.control_query, intervention=True)
+
+    control_positions_encoded, control_positions_decoded = get_filtered_positions(data, experiment_setup.intervention_query, experiment_setup.control_query, intervention=False)
+
+    if len(intervention_positions_encoded) == 0 or len(control_positions_encoded) == 0:
+        rprint(
+            f"[yellow]Skipping {experiment_setup.legal_square}: "
+            f"Not enough positions found "
+            f"(|interv|={len(intervention_positions_encoded)}, |ctrl|={len(control_positions_encoded)}).[/yellow]"
+        )
+        return None, None
+
+    display_experiment_summary(
+        experiment_setup,
+        len(intervention_positions_encoded),
+        len(control_positions_encoded)
+    )
 
     intervened_metrics = intervene(
         model=model,
         positions=intervention_positions_encoded,
-        legal_square=legal_square,
-        dt_queries=dt_queries,
+        legal_square=experiment_setup.legal_square,
+        dt_queries=experiment_setup.dt_queries,
         # dla_positions=intervention_positions_encoded,
         # dla=True,
         # k=k,
@@ -291,11 +416,65 @@ if __name__ == "__main__":
     control_metrics = intervene(
         model=model,
         positions=control_positions_encoded,
-        legal_square=legal_square,
-        dt_queries=dt_queries,
+        legal_square=experiment_setup.legal_square,
+        dt_queries=experiment_setup.dt_queries,
         # dla_positions=intervention_positions_encoded,
         # dla=True,
         # k=k,
+        device=device,
     )
 
     print_table(intervened_metrics, control_metrics)
+
+    return intervened_metrics, control_metrics
+
+if __name__ == "__main__":
+    device = "cuda" if t.cuda.is_available() else "cpu"
+
+    model = load_model(device=device)
+    data = load_data(device=device)
+
+    rng = np.random.default_rng(0)
+
+    agg_intervened = InterventionMetrics()
+    agg_control = InterventionMetrics()
+
+    total_squares = 0
+
+    for row in range(8):
+        for col in range(8):
+            if 3 <= row <= 4 and 3 <= col <= 4:
+                continue
+
+            coords = (row, col)
+            legal_square = coords_to_square(coords)
+
+            experiment_setup = generate_experiment_setup(legal_square, rng)
+
+            intervened_metrics, control_metrics = run_single_experiment(
+                experiment_setup,
+                model, 
+                data,
+                device,
+            )
+
+            if intervened_metrics and control_metrics:
+                agg_intervened += intervened_metrics
+                agg_control += control_metrics
+                total_squares += 1
+
+            else:
+                continue
+
+    avg_intervened = agg_intervened / total_squares
+    avg_control = agg_control / total_squares
+
+    print_table(avg_intervened, avg_control)
+
+    current_dir = Path(__file__).resolve().parent
+
+    intervention_save_path = current_dir / "intervention_metrics_60_squares.json"
+    control_save_path = current_dir / "control_metrics_60_squares.json"
+
+    avg_intervened.save(file_path=intervention_save_path)
+    avg_control.save(file_path=control_save_path)
