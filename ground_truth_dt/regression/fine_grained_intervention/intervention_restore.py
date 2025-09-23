@@ -11,7 +11,7 @@ import circuits.utils as utils
 import circuits.othello_utils as othello_utils
 from circuits.eval_sae_as_classifier import construct_othello_dataset
 from ground_truth_dt.dtypes import DecisionTreeResults
-from ground_truth_dt.gt_dt_viz import find_neurons_for_query
+from ground_truth_dt.regression.gt_dt_viz import find_neurons_for_query
 
 import json
 import sys
