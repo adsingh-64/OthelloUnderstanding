@@ -188,6 +188,26 @@ def merge_dicts(dicts: list[dict]):
     return merged
 
 
+def filter_pos_unembed(
+    model: NNsightModel, 
+    legal_square_id: int, 
+    neurons: dict[int, list[int]],
+) -> dict[int, list[int]]:
+    unembed = model.W_U[:, legal_square_id].detach().clone()
+
+    def is_pos_unembed(unembed, layer, idx):
+        decoder = model.W_out[layer, idx]
+        return einops.einsum(decoder, unembed, "d_model, d_model ->").item() > 0
+    
+    for layer in neurons.keys():
+        neurons_unfiltered = neurons[layer]
+        neurons_filtered = list(filter(lambda idx: is_pos_unembed(unembed, layer, idx), neurons_unfiltered))
+        neurons[layer] = neurons_filtered
+
+    return neurons
+
+
+
 def get_legal_moves_batch(
     batch: list[Int[Tensor, "seq"]],
 ) -> list[list[int]]:

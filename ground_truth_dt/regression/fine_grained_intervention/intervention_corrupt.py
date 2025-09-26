@@ -36,6 +36,7 @@ from ground_truth_dt.utils import (
     get_legal_moves_batch,
     right_pad,
     no_ablation,
+    filter_pos_unembed,
 )
 
 
@@ -159,7 +160,7 @@ def below_threshold(
 
 
 def intervene(
-    model: NNsightModel, 
+    model: NNsightModel,
     positions: list[Int[Tensor, "n_moves"]], 
     legal_square: str = "C0",
     dt_queries: list[set[str]] | None = None, 
@@ -169,14 +170,14 @@ def intervene(
     batch_size: int = 1024,
     device = "cuda",
 ) -> InterventionMetrics:
+    legal_square_id = neel_utils.to_id(legal_square)
     if dla:
         neurons = find_neurons_for_query_DLA(model, dla_positions, legal_square, k=k, device=device)
     else:
         neurons = merge_dicts([find_neurons_for_query(query) for query in dt_queries])
 
+    neurons = filter_pos_unembed(model, legal_square_id, neurons)
     print(f"Ablating {sum(len(neurons) for neurons in neurons.values())} neurons")
-
-    legal_square_id = neel_utils.to_id(legal_square)
 
     total_logit_diff = 0
     total_prob_diff = 0
@@ -432,6 +433,7 @@ if __name__ == "__main__":
     device = "cuda" if t.cuda.is_available() else "cpu"
 
     model = load_model(device=device)
+
     data = load_data(device=device)
 
     rng = np.random.default_rng(0)
@@ -473,8 +475,8 @@ if __name__ == "__main__":
 
     current_dir = Path(__file__).resolve().parent
 
-    intervention_save_path = current_dir / "intervention_metrics_60_squares.json"
-    control_save_path = current_dir / "control_metrics_60_squares.json"
+    intervention_save_path = current_dir / "intervention_metrics_60_squares_filter_pos_unembed.json"
+    control_save_path = current_dir / "control_metrics_60_squares_filter_pos_unembed.json"
 
     avg_intervened.save(file_path=intervention_save_path)
     avg_control.save(file_path=control_save_path)

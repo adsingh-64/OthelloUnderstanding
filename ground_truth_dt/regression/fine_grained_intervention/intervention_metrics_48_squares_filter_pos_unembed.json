@@ -1,0 +1,10 @@
+{
+    "logit_diff": 2.256523971857602,
+    "prob_diff": 0.06686668456595524,
+    "clean_accuracy": 0.9999534970238094,
+    "corrupted_accuracy": 0.9954212219954005,
+    "accuracy_diff": 0.004532275028408976,
+    "below_1_percent": 0.1379438660158134,
+    "below_5_percent": 0.31193483081977996,
+    "below_10_percent": 0.4265381272336281
+}
