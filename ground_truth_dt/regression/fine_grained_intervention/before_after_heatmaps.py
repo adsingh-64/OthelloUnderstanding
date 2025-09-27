@@ -23,7 +23,7 @@ from rich.table import Table
 from pprint import pprint
 from dataclasses import dataclass
 
-from ground_truth_dt.fine_grained_intervention.utils import (
+from ground_truth_dt.utils import (
     load_model,
     load_data,
     get_filtered_positions,
@@ -33,6 +33,7 @@ from ground_truth_dt.fine_grained_intervention.utils import (
     get_legal_moves_batch,
     right_pad,
     no_ablation,
+    filter_pos_unembed,
 )
 
 
@@ -133,6 +134,7 @@ def intervene(
     else:
         neurons = merge_dicts([find_neurons_for_query(query) for query in dt_queries])
 
+    neurons = filter_pos_unembed(model, legal_square_id, neurons)
     print(f"Ablating {sum(len(neurons) for neurons in neurons.values())} neurons")
 
     legal_square_id = neel_utils.to_id(legal_square)
@@ -264,18 +266,20 @@ if __name__ == "__main__":
     model = load_model(device=device)
     data = load_data(device=device)
 
-    intervention_query = {'C3_empty', 'D3_theirs', 'E3_mine'}
-    control_query = {'C3_empty', 'D4_theirs', 'E5_mine'}
+    intervention_query = {'H3_empty', 'G4_theirs', 'F5_mine'}
+    control_query = {'H3_empty', 'G3_theirs', 'F3_mine'}
 
-    dt_queries = [{'C3_empty', 'D3_theirs', 'E3_mine'}]
+    dt_queries = [{'H3_empty', 'G4_theirs'}]
 
-    legal_square = "C3"
+    legal_square = "H3"
+    legal_square_id = neel_utils.to_id(legal_square)
 
     intervention_positions_encoded, intervention_positions_decoded = get_filtered_positions(data, intervention_query, control_query, intervention=True)
     control_positions_encoded, control_positions_decoded = get_filtered_positions(data, intervention_query, control_query, intervention=False)
 
     ### Plot before after heatmaps
     neurons = merge_dicts([find_neurons_for_query(query) for query in dt_queries])
+    neurons = filter_pos_unembed(model, legal_square_id, neurons)
     
     batch_tensor, batch_indices, last_token_indices = right_pad([intervention_positions_encoded[0]])
 
@@ -286,9 +290,8 @@ if __name__ == "__main__":
         last_token_indices,
         legal_square_id=19,
     )
-    print(logits_clean.shape)
     probs_clean = t.nn.functional.softmax(logits_clean, dim = -1)
-    probs_clean_square = t.zeros((8, 8))
+    probs_clean_square = t.zeros((8, 8), device=device)
     probs_clean_square.flatten()[ALL_SQUARES] = probs_clean[0, 1:]
 
     logits_corrupted, _, _ = zero_ablation(
@@ -297,16 +300,18 @@ if __name__ == "__main__":
         batch_indices, 
         last_token_indices,
         legal_square_id=19,
+        neurons=neurons,
     )
     probs_corrupted = t.nn.functional.softmax(logits_corrupted, dim = -1)
-    probs_corrupted_square = t.zeros((8, 8))
+    probs_corrupted_square = t.zeros((8, 8), device=device)
     probs_corrupted_square.flatten()[ALL_SQUARES] = probs_corrupted[0, 1:]
 
     neel_utils.plot_board_values(
         t.stack([probs_clean_square, probs_corrupted_square]),
+        title="Example intervention change in probabilities (H3)",
         board_titles=["Clean", "Corrupted"],
-        boards_per_row=2,
-        width=400,
-        height=200,
+        boards_per_row=1,
+        width=600,
+        height=800,
     )
 
