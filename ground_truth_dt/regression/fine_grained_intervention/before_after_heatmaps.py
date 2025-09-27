@@ -308,8 +308,8 @@ if __name__ == "__main__":
 
     neel_utils.plot_board_values(
         t.stack([probs_clean_square, probs_corrupted_square]),
-        title="Example intervention change in probabilities (H3)",
-        board_titles=["Clean", "Corrupted"],
+        title="Before/after probabilites for an example intervention setup (H3)",
+        board_titles=["Before", "After"],
         boards_per_row=1,
         width=600,
         height=800,

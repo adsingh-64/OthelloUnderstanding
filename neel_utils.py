@@ -395,10 +395,20 @@ def plot_board_values(
     # Handle color coding, depending on the data type
     if state.dtype in [np.int64, np.int32]:
         kwargs |= dict(color_continuous_scale="Greys")
-    elif state.max().item() > 0:
-        kwargs |= dict(color_continuous_scale="RdBu", color_continuous_midpoint=0.0)
     else:
-        kwargs |= dict(color_continuous_scale="Blues")
+        min_val = state.min().item()
+        max_val = state.max().item()
+        if min_val < 0 and max_val > 0:
+            # True diverging data (both signs present)
+            kwargs |= dict(color_continuous_scale="RdBu", color_continuous_midpoint=0.0)
+        else:
+            # All non-negative (or all non-positive) -> use sequential scale without midpoint
+            # Default to Blues (restores previous appearance) unless user already supplied a scale
+            if 'color_continuous_scale' not in kwargs:
+                kwargs |= dict(color_continuous_scale="Blues")
+            # If all non-negative, clamp lower bound to zero to avoid negative tick labels
+            if min_val >= 0:
+                kwargs.setdefault('range_color', (0, max_val if max_val > 0 else 1))
 
     # Create the figure
     fig = px.imshow(to_numpy(state), y=list("ABCDEFGH"), x=[str(i) for i in range(8)], aspect="equal", **kwargs)
